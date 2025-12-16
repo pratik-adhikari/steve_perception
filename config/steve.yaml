@@ -1,0 +1,61 @@
+camera_profiles:
+  wrist:
+    # sensor_model: d405           # Intel RealSense D405, close-range
+    mount: wrist                 # where it sits on the robot
+
+    #AG: Aligned with 'ros2 topic list' output
+    rgb_topic: /wrist_camera/wrist_camera/image_raw
+    depth_topic: /wrist_camera/wrist_camera/depth/image_raw
+    camera_info_topic: /wrist_camera/wrist_camera/camera_info
+
+    # Frame coming from camera_info / TF (check if    #AG: Frame confirmed via 'ros2 topic echo'
+    frame_id: wrist_camera_color_optical_frame
+    base_frame: base_link
+    world_frame: map
+
+    # D405 on this robot publishes 32FC1 in METERS (we already checked)
+    depth_scale: 1.0
+
+    # Range tuned to the actual data you measured (~7 cm – 50 cm)
+    depth_min: 0.07              # ignore ultra-near garbage
+    depth_max: 10.70              # beyond this the D405 saturates / is junk
+
+    stride: 2                    # downsample for pointcloud
+
+  pan_tilt: #AG: Renamed from 'head' to match simulation name 'pan_tilt_camera'
+    # sensor_model: l515           # Intel RealSense L515, room-scale
+    mount: head                  # mast / head camera
+
+    #AG: Aligned with 'ros2 topic list' output
+    rgb_topic: /pan_tilt_camera/pan_tilt_camera/image_raw
+    depth_topic: /pan_tilt_camera/pan_tilt_camera/depth/image_raw
+    camera_info_topic: /pan_tilt_camera/pan_tilt_camera/camera_info
+
+    frame_id: pan_tilt_camera_optical_frame #AG: Frame confirmed via 'ros2 topic echo'
+    base_frame: base_link
+    world_frame: map
+
+    # L515 also typically publishes depth in meters
+    depth_scale: 1.0
+
+    # Reasonable indoor working band; you can refine after you see real data
+    depth_min: 0.25              # ignore very near range where L515 is noisy
+    depth_max: 10.0              # 9 meters is specification. enough for lab-scale mapping
+
+    stride: 2
+
+  front:
+    mount: base_front
+
+    rgb_topic: /front_camera/front_camera/image_raw
+    depth_topic: /front_camera/front_camera/depth/image_raw
+    camera_info_topic: /front_camera/front_camera/camera_info
+
+    frame_id: front_camera_optical_frame
+    base_frame: base_link
+    world_frame: map
+
+    depth_scale: 1.0
+    depth_min: 0.1
+    depth_max: 10.0
+    stride: 2

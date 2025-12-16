@@ -1,0 +1,25 @@
+# Mapping profile: two RGB-D cameras (front + pan_tilt)
+
+perception:
+  config_file: steve.yaml
+  enabled_cameras: [front, pan_tilt]
+  publish_rgbd: true
+
+rtabmap:
+  use_sim_time: true
+  delete_db_on_start: true
+
+  base_frame: base_link
+  odom_frame: odom
+  map_frame: map
+
+  ini_file: rtabmap_two_rgbd.ini
+
+  # CameraAgent output topics
+  rgbd_topic0: /steve_perception/front/rgbd_image
+  rgbd_topic1: /steve_perception/pan_tilt/rgbd_image
+
+  wait_for_transform: 0.2
+
+viz:
+  rtabmap_viz: true
