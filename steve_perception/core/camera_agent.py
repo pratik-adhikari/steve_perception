@@ -1,87 +1,65 @@
-#!/usr/bin/env python3
-
-"""steve_perception.core.camera_agent
-
-One CameraAgent == one RGB-D camera.
-
-Responsibilities (keep it strict):
-1) Subscribe to (RGB, Depth, CameraInfo) and synchronize them.
-2) Gate output on TF availability at the *same timestamp* (prevents TF/time drift issues).
-3) Optionally publish a single RTAB-Map-compatible RGBDImage topic.
-
-Non-goals:
-- Starting camera drivers (Gazebo / real drivers do that).
-- Owning its own TF listener (PerceptionNode owns one, we reuse its buffer).
-"""
+"""CameraAgent: synchronize RGB + Depth + CameraInfo and publish RTAB-Map RGBDImage."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 import threading
 from typing import Optional
-
 import numpy as np
 from cv_bridge import CvBridge
 from message_filters import Subscriber, ApproximateTimeSynchronizer
-
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
-
 from sensor_msgs.msg import CameraInfo, Image
 from rtabmap_msgs.msg import RGBDImage
-
 from tf2_ros import Buffer
-
 from steve_perception.core.frame_types import RGBDFrame, Intrinsics
-
 
 @dataclass(frozen=True)
 class CameraAgentConfig:
+    # Input topics and frames
     rgb_topic: str
     depth_topic: str
     info_topic: str
     frame_id: str
     base_frame: str
-
-    # Depth handling
+    # Depth processing
     depth_scale: float = 1.0
     depth_min: float = 0.0
     depth_max: float = 40.0
-
-    # Synchronization
+    # Message synchronization
     queue_size: int = 30
     slop: float = 0.02
-
-    # TF gating
+    # TF timing parameters
     wait_for_tf_sec: float = 0.2
-
-    # Output
-    publish_rgbd: bool = False
+    tf_delay_sec: float = 0.05  # compensate for TF/image timestamp jitter
+    tf_tolerance_sec: float = 0.05
+    # Output control
+    publish_rgbd_allowed: bool = False
+    start_publishing: bool = False
     rgbd_topic: Optional[str] = None
-
 
 class CameraAgent:
     """Synchronize + (optionally) republish a unified RGBD stream."""
 
     def __init__(self, node: Node, name: str, tf_buffer: Buffer, cfg: CameraAgentConfig):
+        """Initialize camera agent with subscriptions and synchronizer."""
         self.node = node
         self.log = node.get_logger()
         self.name = name
         self.tf_buffer = tf_buffer
         self.cfg = cfg
-
+        self._publish_allowed = bool(cfg.publish_rgbd_allowed)
+        self._publish_enabled = False
         self._enabled = True
         self._lock = threading.Lock()
         self._latest_frame: Optional[RGBDFrame] = None
-
         self._bridge = CvBridge()
 
-        # --- Subscriptions (message_filters) ---
+        # Setup message_filters subscriptions
         self._rgb_sub = Subscriber(self.node, Image, self.cfg.rgb_topic)
         self._depth_sub = Subscriber(self.node, Image, self.cfg.depth_topic)
         self._info_sub = Subscriber(self.node, CameraInfo, self.cfg.info_topic)
-
         self._ats = ApproximateTimeSynchronizer(
             [self._rgb_sub, self._depth_sub, self._info_sub],
             queue_size=int(self.cfg.queue_size),
@@ -89,62 +67,78 @@ class CameraAgent:
         )
         self._ats.registerCallback(self._cb)
 
-        # --- Optional output publisher (RGBDImage for RTAB-Map) ---
-        self._pub_rgbd: Optional[object] = None
-        if self.cfg.publish_rgbd:
-            out_topic = self.cfg.rgbd_topic or f"/steve_perception/{self.name}/rgbd_image"
-            self._pub_rgbd = self.node.create_publisher(RGBDImage, out_topic, 10)
-            self.log.info(f"[CameraAgent:{self.name}] publishing RGBDImage -> {out_topic}")
-        else:
-            self.log.info(f"[CameraAgent:{self.name}] RGBDImage publishing disabled")
+        # Publisher created on-demand when publishing is enabled
+        self._pub_rgbd = None
+        self.log.info(f"[CameraAgent:{self.name}] sync rgb='{self.cfg.rgb_topic}' depth='{self.cfg.depth_topic}' info='{self.cfg.info_topic}'")
 
-        self.log.info(
-            f"[CameraAgent:{self.name}] sync: rgb={self.cfg.rgb_topic} depth={self.cfg.depth_topic} info={self.cfg.info_topic}"
-        )
+        if bool(self.cfg.start_publishing):
+            self.set_publishing(True)
 
-    # -----------------------
-    # Control
-    # -----------------------
     def start(self) -> None:
+        """Enable frame processing."""
         self._enabled = True
         self.log.info(f"[CameraAgent:{self.name}] enabled")
 
     def stop(self) -> None:
+        """Disable frame processing."""
         self._enabled = False
         self.log.info(f"[CameraAgent:{self.name}] disabled")
 
-    # -----------------------
-    # Data access
-    # -----------------------
+    def set_publishing(self, enabled: bool) -> None:
+        """Enable/disable RGBDImage publishing (respects config allow-list)."""
+        want = bool(enabled) and self._publish_allowed
+        if want and self._pub_rgbd is None:
+            out_topic = self.cfg.rgbd_topic or f"/steve_perception/{self.name}/rgbd_image"
+            self._pub_rgbd = self.node.create_publisher(RGBDImage, out_topic, 10)
+            self.log.info(f"[CameraAgent:{self.name}] publishing RGBDImage -> {out_topic}")
+        self._publish_enabled = want
+
     def get_latest_frame(self) -> Optional[RGBDFrame]:
+        """Thread-safe access to latest synchronized frame."""
         with self._lock:
             return self._latest_frame
 
-    # -----------------------
-    # Internal
-    # -----------------------
     def _cb(self, rgb_msg: Image, depth_msg: Image, info_msg: CameraInfo) -> None:
+        """Synchronized callback for RGB+Depth+CameraInfo."""
         if not self._enabled:
             return
-
-        # 1) TF gating at the *message timestamp*.
-        stamp = rgb_msg.header.stamp
-        lookup_time = Time.from_msg(stamp)
-        try:
-            self.tf_buffer.lookup_transform(
-                self.cfg.base_frame,
-                self.cfg.frame_id,
-                lookup_time,
-                timeout=Duration(seconds=float(self.cfg.wait_for_tf_sec)),
-            )
-        except Exception as e:
-            # Do NOT publish frames that RTAB can't transform consistently.
-            self.log.warn(
-                f"[CameraAgent:{self.name}] drop frame: TF {self.cfg.base_frame}<-{self.cfg.frame_id} @ stamp missing ({e})"
-            )
+        if not self._publish_enabled:
             return
 
-        # 2) Publish RTAB-Map RGBDImage (raw msgs) if enabled.
+        stamp = rgb_msg.header.stamp
+        t0 = Time.from_msg(stamp)
+        delay = Duration(seconds=float(self.cfg.tf_delay_sec))
+        tol = float(self.cfg.tf_tolerance_sec)
+
+        # Try multiple timestamps to find valid TF
+        candidates = [t0 - delay]
+        if tol > 0.0:
+            candidates += [
+                (t0 - delay) - Duration(seconds=tol),
+                (t0 - delay) + Duration(seconds=tol),
+            ]
+
+        ok = False
+        last_err: Optional[Exception] = None
+        for tt in candidates:
+            try:
+                # Check if TF is available at this timestamp
+                self.tf_buffer.lookup_transform(
+                    self.cfg.base_frame,
+                    self.cfg.frame_id,
+                    tt,
+                    timeout=Duration(seconds=float(self.cfg.wait_for_tf_sec)),
+                )
+                ok = True
+                break
+            except Exception as e:
+                last_err = e
+
+        if not ok:
+            self.log.warn(f"[CameraAgent:{self.name}] drop frame: TF {self.cfg.base_frame}<-{self.cfg.frame_id} near stamp missing ({last_err})")
+            return
+
+        # Publish RGBDImage message if enabled
         if self._pub_rgbd is not None:
             out = RGBDImage()
             out.header = rgb_msg.header
@@ -154,25 +148,18 @@ class CameraAgent:
             out.depth_camera_info = info_msg
             self._pub_rgbd.publish(out)
 
-        # 3) Build internal RGBDFrame (for future semantic mapping / debugging).
-        # NOTE: mapping itself does NOT need these numpy conversions, but other WP1 tasks will.
         rgb_np = self._bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="bgr8")
         depth_np = self._bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough").astype(np.float32)
 
-        # Depth normalization:
-        # - If depth is uint16 or looks like millimeters, convert to meters.
+        # Convert depth to meters if needed
         if depth_np.dtype == np.uint16 or float(np.nanmax(depth_np)) > 50.0:
             depth_np *= 0.001
         depth_np *= float(self.cfg.depth_scale)
 
-        # Clip invalid / out-of-band values.
         depth_np[~np.isfinite(depth_np)] = 0.0
-        if self.cfg.depth_min > 0.0 or self.cfg.depth_max < 1e9:
-            dmin = float(self.cfg.depth_min)
-            dmax = float(self.cfg.depth_max)
-            if dmax <= dmin:
-                # Fail safe: don't kill all depth.
-                dmax = dmin + 1.0
+        dmin = float(self.cfg.depth_min)
+        dmax = float(self.cfg.depth_max)
+        if dmax > dmin:
             depth_np[(depth_np < dmin) | (depth_np > dmax)] = 0.0
 
         K = np.array(info_msg.k, dtype=np.float32).reshape(3, 3)

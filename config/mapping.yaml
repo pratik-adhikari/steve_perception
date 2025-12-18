@@ -1,0 +1,108 @@
+# ============================================================================
+# RTAB-Map Mapping Configuration
+# ============================================================================
+# This configuration file controls the RTAB-Map SLAM system for 3D mapping.
+# It defines logging levels, perception settings, RTAB-Map parameters, and
+# visualization options.
+#
+# Referenced by: mapping.launch.py (via mapping_config parameter)
+# ============================================================================
+
+# ====================
+# Logging Configuration
+# ====================
+# Set ROS 2 logging levels for each component (debug, info, warn, error, fatal)
+logging:
+  default: info                  # Default level for all nodes
+  steve_perception: info         # Perception node (CameraAgent) logging
+  rgbd_odometry: warn            # Visual odometry node (set to warn to reduce clutter)
+  rtabmap: info                  # RTAB-Map SLAM node logging
+  rtabmap_viz: warn              # Visualization node (set to warn to reduce clutter)
+
+# ====================
+# Perception Node Configuration
+# ====================
+# Settings passed to the included perception.launch.py
+perception:
+  config_file: steve.yaml        # Camera profiles YAML file
+
+  # When this mapping profile is launched, PerceptionNode publishes synchronized RGBDImage topics
+  # These are consumed by rgbd_odometry and rtabmap nodes
+  publish_rgbd: true
+
+# ====================
+# RTAB-Map SLAM Configuration
+# ====================
+rtabmap:
+  # ==== Time Synchronization ====
+  # Use simulation time (Gazebo clock) instead of wall clock
+  # Set to false when running on real robot
+  use_sim_time: true
+
+  # ==== Database Management ====
+  # If true, delete existing map database on startup (start fresh mapping)
+  # If false, continue from previous mapping session
+  delete_db_on_start: true
+
+  # ==== TF Frame Configuration ====
+  # These must match the frames published by the robot's URDF and localization
+
+  # Robot base frame (root of the robot's TF tree)
+  base_frame: base_link
+
+  # Odometry frame (published by wheel odometry or visual odometry)
+  odom_frame: odom
+
+  # Global map frame (published by RTAB-Map after loop closure)
+  map_frame: map
+
+  # ==== RTAB-Map Algorithm Parameters ====
+  # INI file contains hundreds of RTAB-Map internal parameters
+  # (feature detection, loop closure, memory management, etc.)
+  ini_file: rtabmap_rgbd.ini
+
+  # ==== RGBD Input Topics ====
+  # List of synchronized RGBD topics produced by CameraAgent
+  # Topic format: /steve_perception/<camera_name>/rgbd_image
+  rgbd_topics:
+    - /steve_perception/front/rgbd_image          # Front camera RGBD topic
+    - /steve_perception/pan_tilt/rgbd_image       # Pan-tilt camera RGBD topic (multi-camera)
+
+  # ==== LiDAR/Laser Scan Integration ====
+  # RTAB-Map can optionally use 2D laser scans for additional constraints
+
+  # Whether to subscribe to a 2D laser scan topic
+  # WARNING:
+  # If subscribe_scan=true, RTAB-Map will synchronize RGBD + scan.
+  # If the scan is missing/slow/jittery, RTAB-Map will look "stalled" even though RGBD is publishing.
+  # Enable this only after you confirm the scan is stable.
+  subscribe_scan: false
+
+  # Topic name for 2D laser scan (sensor_msgs/LaserScan)
+  scan_topic: /lidar_1/scan
+
+  # ==== Visual Odometry Settings ====
+  # Empty string means don't use a separate odometry guess frame
+  # Set to e.g. "odom" if you want to fuse multiple odometry sources
+  odom_guess_frame: ""
+
+  # Timeout (seconds) to wait for TF transforms before giving up
+  # Increase if you see "transform timeout" warnings
+  wait_for_transform: 1.0
+
+  # ==== Output Database Path ====
+  # Directory where the RTAB-Map SQLite database will be saved
+  # Empty string defaults to ~/.ros/steve_maps/ (set in mapping.launch.py)
+  output_dir: "/media/pratik/ssd_linux/ws/steve_ros2_ws2/steve_ros2_ws/src/steve_perception/data"
+
+  # Filename for the RTAB-Map database (stores the 3D map)
+  database_name: rtabmap.db
+
+# ====================
+# Visualization Configuration
+# ====================
+# RTAB-Map visualization GUI settings
+viz:
+  # Whether to launch rtabmap_viz (3D visualization interface)
+  # Set to false if running headless or to save CPU/GPU resources
+  rtabmap_viz: true

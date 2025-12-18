@@ -1,18 +1,44 @@
 <?xml version="1.0"?>
+<!-- Standard XML declaration specifying version -->
+
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!-- Processing instruction that links to ROS 2 package format 3 schema for validation -->
+
 <package format="3">
+  <!-- Root element declaring this is a ROS 2 package using format 3 (latest) -->
+
   <name>steve_perception</name>
+  <!-- Package name - must match the name in setup.py -->
+
   <version>0.0.0</version>
+  <!-- Package version using semantic versioning (major.minor.patch) -->
+
   <description>TODO: Package description</description>
+  <!-- Human-readable description of what this package does - TODO needs to be filled -->
+
   <maintainer email="pratik.adhikari@smail.inf.h-brs.de">pratik</maintainer>
+  <!-- Person responsible for maintaining this package with their contact email -->
+
   <license>TODO: License declaration</license>
+  <!-- Software license governing how this package can be used - TODO needs to be specified -->
 
   <test_depend>ament_copyright</test_depend>
+  <!-- Test-only dependency: checks for copyright/license headers in source files -->
+
   <test_depend>ament_flake8</test_depend>
+  <!-- Test-only dependency: runs flake8 linter to check Python code style (PEP 8) -->
+
   <test_depend>ament_pep257</test_depend>
+  <!-- Test-only dependency: validates Python docstrings follow PEP 257 conventions -->
+
   <test_depend>python3-pytest</test_depend>
+  <!-- Test-only dependency: pytest framework for running Python unit tests -->
 
   <export>
+    <!-- Export tag contains build system metadata -->
+
     <build_type>ament_python</build_type>
+    <!-- Declares this is a Python package using ament build system (not CMake) -->
+    <!-- This tells colcon to use setuptools instead of CMake for building -->
   </export>
 </package>

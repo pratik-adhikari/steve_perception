@@ -1,61 +1,164 @@
-camera_profiles:
-  wrist:
-    # sensor_model: d405           # Intel RealSense D405, close-range
-    mount: wrist                 # where it sits on the robot
+# ============================================================================
+# Camera Profiles Configuration for Steve Perception
+# ============================================================================
+# This file defines all RGB-D cameras used by the PerceptionNode.
+# Each camera profile specifies topics, frame IDs, depth parameters, and
+# synchronization settings. The PerceptionNode creates one CameraAgent per profile.
+#
+# Referenced by: perception.launch.py (via config_file parameter)
+# ============================================================================
 
-    #AG: Aligned with 'ros2 topic list' output
+camera_profiles:
+  # ==========================================================================
+  # Wrist Camera (Intel RealSense D405)
+  # ==========================================================================
+  # Close-range camera mounted on the robot's wrist for manipulation tasks
+  wrist:
+    # sensor_model: d405           # Intel RealSense D405, optimized for close-range object perception
+    mount: wrist                   # Physical mount location on the robot
+
+    # ==== ROS 2 Topics ====
+    # Topic names verified with 'ros2 topic list' output
+
+    # RGB color image topic (sensor_msgs/Image, usually encoding bgr8 or rgb8)
     rgb_topic: /wrist_camera/wrist_camera/image_raw
+
+    # Depth image topic (sensor_msgs/Image, encoding 32FC1 in meters or 16UC1 in mm)
     depth_topic: /wrist_camera/wrist_camera/depth/image_raw
+
+    # Camera calibration info topic (sensor_msgs/CameraInfo, provides K, D, P matrices)
     camera_info_topic: /wrist_camera/wrist_camera/camera_info
 
-    # Frame coming from camera_info / TF (check if    #AG: Frame confirmed via 'ros2 topic echo'
+    # ==== TF Frames ====
+    # Frame names verified with 'ros2 topic echo' and 'ros2 run tf2_tools view_frames'
+
+    # Optical frame of the camera (defined by CameraInfo header, follows OpenCV/ROS camera conventions)
+    # This is where the camera sees from, typically +Z forward, +X right, +Y down
     frame_id: wrist_camera_color_optical_frame
+
+    # Robot's base coordinate frame (typically the root of the robot's TF tree)
     base_frame: base_link
+
+    # Global map coordinate frame (published by SLAM or localization)
     world_frame: map
 
-    # D405 on this robot publishes 32FC1 in METERS (we already checked)
+    # ==== Depth Parameters ====
+    # D405 publishes depth as 32-bit float (32FC1) in METERS (confirmed via debug output)
+
+    # Scale factor to convert depth values to meters (1.0 = already in meters, 0.001 = millimeters to meters)
     depth_scale: 1.0
 
-    # Range tuned to the actual data you measured (~7 cm – 50 cm)
-    depth_min: 0.07              # ignore ultra-near garbage
-    depth_max: 10.70              # beyond this the D405 saturates / is junk
+    # ==== Depth Range Filtering ====
+    # Tuned to D405's specifications and actual measured data (~7cm – 50cm effective range)
 
-    stride: 2                    # downsample for pointcloud
+    # Minimum valid depth in meters (ignores ultra-near garbage/noise)
+    # D405 struggles below 7cm
+    depth_min: 0.07
 
-  pan_tilt: #AG: Renamed from 'head' to match simulation name 'pan_tilt_camera'
-    # sensor_model: l515           # Intel RealSense L515, room-scale
-    mount: head                  # mast / head camera
+    # Maximum valid depth in meters (beyond this the D405 saturates or becomes unreliable)
+    # Increased to 10.7m to allow mapping further objects
+    depth_max: 10.70
 
-    #AG: Aligned with 'ros2 topic list' output
+    # ==== Point Cloud Generation ====
+    # Stride for downsampling when creating point clouds (1 = full res, 2 = every other pixel)
+    # Higher stride reduces CPU load and point cloud size
+    stride: 2
+
+    # ==== RGBD Publishing ====
+    # Whether this camera is allowed to publish rtabmap_msgs/RGBDImage
+    # This is a per-camera allow-list; actual publishing also requires publish_rgbd_cameras parameter
+    publish_rgbd: true
+
+  # ==========================================================================
+  # Pan-Tilt Camera (Intel RealSense L515)
+  # ==========================================================================
+  # Room-scale camera mounted on the robot's head/mast for navigation and mapping
+  pan_tilt:  # Renamed from 'head' to match simulation name 'pan_tilt_camera'
+    # sensor_model: l515           # Intel RealSense L515, optimized for room-scale perception
+    mount: head                    # Mounted on the robot's pan-tilt head
+
+    # ==== ROS 2 Topics ====
+    # Topic names verified with 'ros2 topic list' output
     rgb_topic: /pan_tilt_camera/pan_tilt_camera/image_raw
     depth_topic: /pan_tilt_camera/pan_tilt_camera/depth/image_raw
     camera_info_topic: /pan_tilt_camera/pan_tilt_camera/camera_info
 
-    frame_id: pan_tilt_camera_optical_frame #AG: Frame confirmed via 'ros2 topic echo'
+    # ==== TF Frames ====
+    # Frame names verified with 'ros2 topic echo' and TF tree visualization
+    frame_id: pan_tilt_camera_optical_frame  # Optical frame confirmed via topic echo
     base_frame: base_link
     world_frame: map
 
-    # L515 also typically publishes depth in meters
+    # ==== Depth Parameters ====
+    # L5 15 typically publishes depth in meters (32FC1 encoding)
     depth_scale: 1.0
 
-    # Reasonable indoor working band; you can refine after you see real data
-    depth_min: 0.25              # ignore very near range where L515 is noisy
-    depth_max: 10.0              # 9 meters is specification. enough for lab-scale mapping
+    # ==== Depth Range Filtering ====
+    # Reasonable indoor working band (can be refined after seeing real data)
 
+    # Minimum valid depth (L515 is noisy in very close range)
+    depth_min: 0.25
+
+    # Maximum valid depth (L515 spec is 9m, this is sufficient for lab-scale mapping)
+    depth_max: 10.0
+
+    # Point cloud downsampling stride
     stride: 2
 
-  front:
-    mount: base_front
+    # ==== Message Synchronization Parameters ====
+    # These control ApproximateTimeSynchronizer behavior for RGB+Depth+Info syncing
 
+    # Queue size for each topic (larger = more tolerance for timing jitter, but higher latency)
+    queue_size: 30
+
+    # Maximum time difference (seconds) between messages to consider them synchronized
+    # 0.02 = 20ms tolerance, suitable for 30Hz cameras with occasional jitter
+    slop: 0.02
+
+    # ==== TF Transform Parameters ====
+    # These control how CameraAgent looks up transforms between frames
+
+    # Timeout for tf2_ros::Buffer::lookupTransform() calls (seconds)
+    # How long to wait for a transform before giving up
+    wait_for_tf_sec: 0.2
+
+    # Delay before looking up TF transform (accounts for TF propagation time)
+    # Helps avoid "transform not available yet" errors
+    tf_delay_sec: 0.05
+
+    # How much older the TF can be compared to the image timestamp
+    # Larger tolerance allows TF timestamps to lag slightly behind image timestamps
+    tf_tolerance_sec: 0.05
+
+    # RGBD publishing allow-list flag
+    publish_rgbd: true
+
+  # ==========================================================================
+  # Front Camera
+  # ==========================================================================
+  # Base-mounted front-facing camera for forward perception
+  front:
+    mount: base_front              # Mounted on the front of the robot base
+
+    # ==== ROS 2 Topics ====
     rgb_topic: /front_camera/front_camera/image_raw
     depth_topic: /front_camera/front_camera/depth/image_raw
     camera_info_topic: /front_camera/front_camera/camera_info
 
+    # ==== TF Frames ====
     frame_id: front_camera_optical_frame
     base_frame: base_link
     world_frame: map
 
+    # ==== Depth Parameters ====
     depth_scale: 1.0
+
+    # Depth range suitable for forward-facing navigation
     depth_min: 0.1
     depth_max: 10.0
+
+    # Point cloud downsampling
     stride: 2
+
+    # RGBD publishing allow-list
+    publish_rgbd: true
