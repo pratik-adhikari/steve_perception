@@ -120,7 +120,7 @@ camera_profiles:
 
     # Timeout for tf2_ros::Buffer::lookupTransform() calls (seconds)
     # How long to wait for a transform before giving up
-    wait_for_tf_sec: 0.2
+    wait_for_tf_sec: 1.0
 
     # Delay before looking up TF transform (accounts for TF propagation time)
     # Helps avoid "transform not available yet" errors

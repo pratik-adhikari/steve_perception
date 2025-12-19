@@ -90,6 +90,10 @@ rtabmap:
   # Increase if you see "transform timeout" warnings
   wait_for_transform: 1.0
 
+  # Buffer sizes used by rtabmap, rgbd_odometry and rgbdx_sync when approx_sync=true.
+  topic_queue_size: 30
+  sync_queue_size: 30
+
   # ==== Output Database Path ====
   # Directory where the RTAB-Map SQLite database will be saved
   # Empty string defaults to ~/.ros/steve_maps/ (set in mapping.launch.py)

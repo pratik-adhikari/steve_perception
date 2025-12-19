@@ -39,6 +39,11 @@ def _launch_setup(context, *args, **kwargs):
     # Parse configuration sections
     perception_cfg = cfg.get("perception", {}) or {}
     rtab = cfg.get("rtabmap", {}) or {}
+
+    # Queue sizes
+    topic_q = int(rtab.get("topic_queue_size", 30))
+    sync_q = int(rtab.get("sync_queue_size", 30))
+
     viz = cfg.get("viz", {}) or {}
     logging_cfg = cfg.get("logging", {}) or {}
 
@@ -123,8 +128,8 @@ def _launch_setup(context, *args, **kwargs):
                 arguments=["--ros-args", "--log-level", logging_cfg.get("rgbdx_sync", "warn")],
                 parameters=[{
                     "approx_sync": True,
-                    "sync_queue_size": 30,
-                    "topic_queue_size": 30,
+                    "sync_queue_size": sync_q,
+                    "topic_queue_size": topic_q,
                     "use_sim_time": use_sim_time,
                 }],
                 remappings=_rgbd_remaps(rgbd_topics) + [("rgbd_images", _rgbd_images_topic())],
@@ -139,8 +144,8 @@ def _launch_setup(context, *args, **kwargs):
         "publish_tf": False,
         "subscribe_rgbd": True,
         "approx_sync": True,
-        "sync_queue_size": 30,
-        "topic_queue_size": 30,
+        "sync_queue_size": sync_q,
+        "topic_queue_size": topic_q,
         "wait_for_transform": wait_for_transform,
     }
     odom_rgbd_topic = rgbd_topics[0]
@@ -168,8 +173,8 @@ def _launch_setup(context, *args, **kwargs):
         "subscribe_odom": True,
         "subscribe_scan": subscribe_scan,
         "approx_sync": True,
-        "sync_queue_size": 30,
-        "topic_queue_size": 30,
+        "sync_queue_size": sync_q,
+        "topic_queue_size": topic_q,
         "wait_for_transform": wait_for_transform,
         "config_path": ini_path,
         "database_path": database_path,
@@ -204,7 +209,7 @@ def _launch_setup(context, *args, **kwargs):
         "subscribe_rgbd": True,
         "subscribe_odom_info": True,
         "approx_sync": True,
-        "sync_queue_size": 30,
+        "sync_queue_size": sync_q,
     }
 
     if use_rgbd_images_interface:
