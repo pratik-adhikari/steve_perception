@@ -1,21 +1,30 @@
-"""ROS 2 node that creates CameraAgents and publishes RGBDImage topics.
+"""Perception entry node.
+
+This node owns the CameraAgents (RGB+Depth sync + TF lookup + cached latest frame).
+
+It can optionally publish RTAB-Map compatible `rtabmap_msgs/RGBDImage` topics via
+`RtabmapBridge`.
 
 Configuration is read from steve.yaml (path passed as a ROS parameter).
 """
-from __future__ import annotations
-from pathlib import Path
-from typing import Dict, List
-import yaml
-import rclpy
-from rclpy.node import Node
-from rcl_interfaces.msg import SetParametersResult
-from rclpy.parameter import Parameter
-from ament_index_python.packages import get_package_share_directory
-from tf2_ros import Buffer, TransformListener
-from rclpy.duration import Duration
-from steve_perception.core.camera_agent import CameraAgent, CameraAgentConfig
 
-# Perception pipeline entry point
+from __future__ import annotations
+
+from typing import Dict, List
+
+import rclpy
+import yaml
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
+from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from tf2_ros import Buffer, TransformListener
+
+from steve_perception.bridges.rtabmap_bridge import RtabmapBridge
+from steve_perception.core.camera_agent import CameraAgent, CameraAgentConfig
+from steve_perception.utils.config_utils import resolve_pkg_config_path
+
+
 class PerceptionNode(Node):
     """Starts CameraAgents and optionally publishes RGBDImage topics."""
 
@@ -23,44 +32,57 @@ class PerceptionNode(Node):
         """Initialize perception node: load config, create TF buffer, start camera agents."""
         super().__init__("steve_perception")
 
-        # Load perception configuration
+# --- Parameters ---
+        # NOTE: commit(2) will make this param accept absolute paths as well.
         self.declare_parameter("config_file", "steve.yaml")
-        config_file  = self.get_parameter("config_file").value
+        # Default to a non-empty list of strings to help type inference, then filter it out
+        self.declare_parameter("enabled_cameras", [""])
+        self.declare_parameter("publish_rgbd", False)
 
-        # Parse camera publishing parameter
-        self.declare_parameter("publish_rgbd_cameras", "")
-        requested_csv = str(self.get_parameter("publish_rgbd_cameras").value)
-        requested = {s.strip() for s in requested_csv.split(",") if s.strip()}
+        config_file = str(self.get_parameter("config_file").value)
+        enabled_cameras = [c for c in self.get_parameter("enabled_cameras").value if c]
+        publish_rgbd = bool(self.get_parameter("publish_rgbd").value)
 
-        pkg_share = Path(get_package_share_directory("steve_perception"))
-        cfg_path = pkg_share / "config" / config_file
+        cfg_path = resolve_pkg_config_path("steve_perception", config_file)
         self.get_logger().info(f"Loading perception config: {cfg_path}")
 
         with open(cfg_path, "r") as f:
-            cfg = yaml.safe_load(f)
+            cfg = yaml.safe_load(f) or {}
 
-        camera_profiles: Dict[str, dict] = cfg.get("camera_profiles", {})
-        selected: List[str] = list(camera_profiles.keys())
-
+        camera_profiles: Dict[str, dict] = cfg.get("camera_profiles", {}) or {}
         if not camera_profiles:
             raise RuntimeError(f"No 'camera_profiles' found in {cfg_path}")
 
+        selected: List[str]
+        if enabled_cameras:
+            selected = [c for c in enabled_cameras if c in camera_profiles]
+            missing = [c for c in enabled_cameras if c not in camera_profiles]
+            if missing:
+                raise RuntimeError(
+                    f"enabled_cameras contains unknown cameras {missing}. "
+                    f"Known cameras: {sorted(camera_profiles.keys())}"
+                )
+        else:
+            selected = list(camera_profiles.keys())
+
         self.get_logger().info(
-            f"PerceptionNode starting cameras={selected} publish_rgbd_cameras='{requested_csv}'"
+            f"PerceptionNode starting cameras={selected} publish_rgbd={publish_rgbd}"
         )
 
-        # Create shared TF transform system
+        # --- Shared TF buffer/listener ---
         self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.camera_agents: Dict[str, CameraAgent] = {}
 
-        # Create a CameraAgent for each camera profile
+        # --- Optional RTAB-Map bridge ---
+        self.bridge = None
+        if publish_rgbd:
+            selected_cfg = {name: camera_profiles[name] for name in selected}
+            self.bridge = RtabmapBridge(self, selected_cfg)
+
+        # --- Camera agents ---
+        self.camera_agents: Dict[str, CameraAgent] = {}
         for cam_name in selected:
             cam_cfg = camera_profiles[cam_name]
-            # Determine if this camera should publish RGBDImage
-            allowed = bool(cam_cfg.get("publish_rgbd", False))
-            requested_this = (cam_name in requested) if requested else False
-            publish_this = bool(allowed and requested_this)
 
             agent_cfg = CameraAgentConfig(
                 rgb_topic=str(cam_cfg["rgb_topic"]),
@@ -74,11 +96,6 @@ class PerceptionNode(Node):
                 queue_size=int(cam_cfg.get("queue_size", 30)),
                 slop=float(cam_cfg.get("slop", 0.02)),
                 wait_for_tf_sec=float(cam_cfg.get("wait_for_tf_sec", 0.2)),
-                tf_delay_sec=float(cam_cfg.get("tf_delay_sec", 0.05)),
-                tf_tolerance_sec=float(cam_cfg.get("tf_tolerance_sec", 0.05)),
-                publish_rgbd_allowed=allowed,
-                start_publishing=publish_this,
-                rgbd_topic=str(cam_cfg.get("rgbd_topic")) if cam_cfg.get("rgbd_topic") else None,
             )
 
             self.camera_agents[cam_name] = CameraAgent(
@@ -86,27 +103,17 @@ class PerceptionNode(Node):
                 name=cam_name,
                 tf_buffer=self.tf_buffer,
                 cfg=agent_cfg,
+                on_frame=(self.bridge.on_frame if self.bridge is not None else None),
             )
 
-        # Enable parameter updates at runtime
-        self.add_on_set_parameters_callback(self._on_set_parameters)
 
-    def _on_set_parameters(self, params: list[Parameter]) -> SetParametersResult:
-        """Handle runtime parameter changes for dynamic camera control."""
-        for p in params:
-            if p.name == "publish_rgbd_cameras":
-                requested_csv = str(p.value)
-                requested = {s.strip() for s in requested_csv.split(",") if s.strip()}
-                for cam_name, agent in self.camera_agents.items():
-                    requested_this = (cam_name in requested)
-                    agent.set_publishing(requested_this)
-        return SetParametersResult(successful=True)
 
 def main(args=None) -> None:
     """Entry point: ros2 run steve_perception perception_node"""
     rclpy.init(args=args)
     node = PerceptionNode()
-    rclpy.spin(node)
+    executor = MultiThreadedExecutor()
+    rclpy.spin(node, executor=executor)
     node.destroy_node()
     rclpy.shutdown()
 
