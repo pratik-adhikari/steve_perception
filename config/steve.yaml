@@ -109,18 +109,18 @@ camera_profiles:
     # These control ApproximateTimeSynchronizer behavior for RGB+Depth+Info syncing
 
     # Queue size for each topic (larger = more tolerance for timing jitter, but higher latency)
-    queue_size: 30
+    queue_size: 50
 
     # Maximum time difference (seconds) between messages to consider them synchronized
-    # 0.02 = 20ms tolerance, suitable for 30Hz cameras with occasional jitter
-    slop: 0.02
+    # 0.2 = 200ms tolerance, relaxed for simulation jitter
+    slop: 0.2
 
     # ==== TF Transform Parameters ====
     # These control how CameraAgent looks up transforms between frames
 
     # Timeout for tf2_ros::Buffer::lookupTransform() calls (seconds)
     # How long to wait for a transform before giving up
-    wait_for_tf_sec: 1.0
+    wait_for_tf_sec: 2.0
 
     # Delay before looking up TF transform (accounts for TF propagation time)
     # Helps avoid "transform not available yet" errors
