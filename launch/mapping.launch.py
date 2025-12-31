@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 import yaml
-from ament_index_python.packages import get_package_share_directory
+from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription, LogInfo
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -30,6 +30,16 @@ def _rgbd_images_topic() -> str:
 def _csv(cams: list[str]) -> str:
     """Convert camera list to comma-separated string."""
     return ",".join([c.strip() for c in cams if str(c).strip()])
+
+
+def _pkg_share_from_this_launch() -> str:
+    """Return `<pkg_share>/steve_perception` based on this launch file location.
+
+    Works both from source and from an installed package, because launch files
+    are installed under: `share/<pkg>/launch/`.
+    """
+    launch_dir = Path(__file__).resolve().parent
+    return str(launch_dir.parent.resolve())
 
 def _launch_setup(context, *args, **kwargs):
     """Build launch nodes based on mapping configuration."""
@@ -87,7 +97,7 @@ def _launch_setup(context, *args, **kwargs):
     subscribe_scan = bool(rtab.get("subscribe_scan", False))
     scan_topic = str(rtab.get("scan_topic", "/scan"))
 
-    pkg_share = get_package_share_directory("steve_perception")
+    pkg_share = _pkg_share_from_this_launch()
     ini_file = str(rtab.get("ini_file", "rtabmap_front_rgbd.ini"))
     ini_path = os.path.join(pkg_share, "config", ini_file)
 
@@ -106,14 +116,20 @@ def _launch_setup(context, *args, **kwargs):
         LogInfo(msg=f"[steve_perception] Mapping YAML: {cfg_path}"),
         LogInfo(msg=f"[steve_perception] RTAB-Map DB: {database_path}"),
         LogInfo(msg=f"[steve_perception] RTAB-Map INI: {ini_path}"),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(perception_launch),
-            launch_arguments={
+        
+        # Launch PerceptionNode (CameraAgents + optional RtabmapBridge)
+        Node(
+            package="steve_perception",
+            executable="perception_node",
+            name="steve_perception",
+            output="screen",
+            arguments=["--ros-args", "--log-level", lvl_perception],
+            parameters=[{
                 "config_file": perception_config_file,
-                "publish_rgbd_cameras": publish_rgbd_cameras_csv if publish_rgbd_master else "",
-                "use_sim_time": str(use_sim_time).lower(),
-                "log_level": lvl_perception,
-            }.items(),
+                "use_sim_time": use_sim_time,
+                "publish_rgbd": publish_rgbd_master,
+                "enabled_cameras": cams,
+            }],
         ),
     ]
 
@@ -233,11 +249,28 @@ def _launch_setup(context, *args, **kwargs):
         )
     )
 
+    # Pan-Tilt Control
+    actions.append(
+        Node(
+            condition=IfCondition(LaunchConfiguration("enable_pan_tilt")),
+            package="steve_perception",
+            executable="pan_tilt_control",
+            name="pan_tilt_control",
+            output="screen",
+            parameters=[{
+                "pan": LaunchConfiguration("pan_tilt_pan"),
+                "tilt": LaunchConfiguration("pan_tilt_tilt"),
+                "speed": LaunchConfiguration("pan_tilt_speed"),
+                "sweep": LaunchConfiguration("pan_tilt_sweep")
+            }]
+        )
+    )
+
     return actions
 
 def generate_launch_description():
     """ROS 2 launch entry point."""
-    pkg_share = get_package_share_directory("steve_perception")
+    pkg_share = _pkg_share_from_this_launch()
     default_cfg = os.path.join(pkg_share, "config", "mapping.yaml")
     delete_db_default = "true"
     viz_default = "true"
@@ -264,6 +297,31 @@ def generate_launch_description():
             "rtabmap_viz",
             default_value=viz_default,
             description="Launch rtabmap_viz.",
+        ),
+        DeclareLaunchArgument(
+            "enable_pan_tilt",
+            default_value="true",
+            description="Enable Pan-Tilt controller node.",
+        ),
+        DeclareLaunchArgument(
+            "pan_tilt_pan",
+            default_value="0.0",
+            description="Pan amplitude/angle (deg).",
+        ),
+        DeclareLaunchArgument(
+            "pan_tilt_tilt",
+            default_value="0.0",
+            description="Tilt amplitude/angle (deg).",
+        ),
+        DeclareLaunchArgument(
+            "pan_tilt_speed",
+            default_value="10.0",
+            description="Pan-Tilt speed (deg/s).",
+        ),
+        DeclareLaunchArgument(
+            "pan_tilt_sweep",
+            default_value="false",
+            description="Enable sweep mode.",
         ),
         OpaqueFunction(function=_launch_setup),
     ])

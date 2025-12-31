@@ -5,18 +5,16 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
-from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import PathJoinSubstitution, ThisLaunchFileDir
 
 def generate_launch_description() -> LaunchDescription:
     config_file = LaunchConfiguration("config_file")
-    publish_rgbd_cameras = LaunchConfiguration("publish_rgbd_cameras")
+    publish_rgbd = LaunchConfiguration("publish_rgbd")
     use_sim_time = LaunchConfiguration("use_sim_time")
     log_level = LaunchConfiguration("log_level")
 
-    config_path = PathJoinSubstitution(
-        [FindPackageShare("steve_perception"), "config", config_file]
-    )
+    # Resolve config relative to this launch file so the package stays relocatable
+    config_path = PathJoinSubstitution([ThisLaunchFileDir(), "..", "config", config_file])
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -25,9 +23,9 @@ def generate_launch_description() -> LaunchDescription:
             description="Perception configuration YAML in steve_perception/config.",
         ),
         DeclareLaunchArgument(
-            "publish_rgbd_cameras",
-            default_value="front",
-            description="Comma-separated list of cameras for RGBDImage publishing.",
+            "publish_rgbd",
+            default_value="false",
+            description="If true, publish /steve_perception/<cam>/rgbd_image for RTAB-Map.",
         ),
         DeclareLaunchArgument(
             "use_sim_time", default_value="true", description="Use Gazebo / simulation time."
@@ -42,7 +40,7 @@ def generate_launch_description() -> LaunchDescription:
             output="screen",
             parameters=[{
                 "config_file": config_path,
-                "publish_rgbd_cameras": publish_rgbd_cameras,
+                "publish_rgbd": publish_rgbd,
                 "use_sim_time": use_sim_time,
             }],
             arguments=["--ros-args", "--log-level", log_level],
