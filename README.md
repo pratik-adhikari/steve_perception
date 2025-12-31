@@ -10,11 +10,11 @@ It provides:
 
 ```mermaid
 graph LR
-    G[Gazebo Sim] -->|Raw RGB + Depth (30Hz)| CA[CameraAgent]
+    G[Gazebo Sim] -->|"Raw RGB + Depth (30Hz)"| CA[CameraAgent]
     CA -->|Sync + TF Lookup| Frame[Synced Frame]
     Frame -->|Convert| Bridge[RtabmapBridge]
-    Bridge -->|Compress (JPEG RGB + 16UC1 Depth)| Msg[RGBDImage Msg]
-    Msg -->|DDS/UDP (Bandwidth Safe)| RTAB[RTAB-Map / Odometry]
+    Bridge -->|"Compress (JPEG RGB + 16UC1 Depth)"| Msg[RGBDImage Msg]
+    Msg -->|"DDS/UDP (Bandwidth Safe)"| RTAB[RTAB-Map / Odometry]
 ```
 
 
