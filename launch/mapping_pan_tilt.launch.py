@@ -8,8 +8,27 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction, LogInfo
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 from launch_ros.actions import Node
+import shutil
 import yaml
 
+def _create_work_copy(src_path: str) -> str:
+    """Create a working copy of the INI file to prevent overwriting the source."""
+    if not os.path.exists(src_path):
+        return src_path # Let RTAB-Map handle missing file error or create default
+
+    # Create a copy in the same directory but with _autosave suffix
+    dirname, basename = os.path.split(src_path)
+    name, ext = os.path.splitext(basename)
+    dst_name = f"{name}_autosave{ext}"
+    dst_path = os.path.join(dirname, dst_name)
+    
+    try:
+        shutil.copy2(src_path, dst_path)
+        print(f"[mapping_pan_tilt] Created config work-copy: {dst_path}")
+        return dst_path
+    except Exception as e:
+        print(f"[mapping_pan_tilt] Failed to create work-copy: {e}. Using original.")
+        return src_path
 def _load_yaml(path: str) -> dict:
     """Load YAML configuration file."""
     with open(path, "r") as f:
@@ -59,7 +78,30 @@ def _launch_setup(context, *args, **kwargs):
 
     # INI file
     ini_file = str(rtab.get("ini_file", "rtabmap_front_rgbd.ini"))
-    ini_path = os.path.join(pkg_share, "config", ini_file)
+    
+    # Logic to support "edit-in-place" without rebuilding:
+    # 1. Check if it's an absolute path
+    # 2. Check if it exists relative to the mapping_config file (e.g. in src/)
+    # 3. Fallback to installed package share
+    
+    if os.path.isabs(ini_file) and os.path.exists(ini_file):
+        ini_path = ini_file
+    else:
+        # Try finding it alongside the mapping_config file
+        cfg_dir = os.path.dirname(cfg_path)
+        potential_path = os.path.join(cfg_dir, ini_file)
+        if os.path.exists(potential_path):
+            ini_path = potential_path
+        else:
+            # Fallback
+            ini_path = os.path.join(pkg_share, "config", ini_file)
+            
+    # Log which file we are using to be explicit
+    print(f"[mapping_pan_tilt] Found source INI: {ini_path}")
+
+    # Create work copy to prevent overwriting source
+    work_ini_path = _create_work_copy(ini_path)
+    print(f"[mapping_pan_tilt] RTAB-Map will use: {work_ini_path}")
 
     # Logging
     lvl_perception = str(logging_cfg.get("steve_perception", "info"))
@@ -98,15 +140,15 @@ def _launch_setup(context, *args, **kwargs):
 
     actions.append(
         Node(
-            condition=IfCondition(LaunchConfiguration("enable_pan_tilt")),
+            condition=IfCondition(LaunchConfiguration("pan_tilt_sweep")),
             package="steve_perception",
             executable="pan_tilt_control",
             name="pan_tilt_control",
             output="screen",
             arguments=pan_tilt_node_args, 
             parameters=[{
-                "pan": LaunchConfiguration("pan_tilt_pan"),
-                "tilt": LaunchConfiguration("pan_tilt_tilt"),
+                "pan": LaunchConfiguration("pan_limit"),
+                "tilt": LaunchConfiguration("tilt_limit"),
                 "speed": LaunchConfiguration("pan_tilt_speed"),
                 "sweep": LaunchConfiguration("pan_tilt_sweep")
             }]
@@ -154,7 +196,7 @@ def _launch_setup(context, *args, **kwargs):
         "sync_queue_size": sync_q,
         "topic_queue_size": topic_q,
         "wait_for_transform": wait_for_transform,
-        "config_path": ini_path,
+        "config_path": work_ini_path,
         "database_path": database_path,
         "delete_db_on_start": LaunchConfiguration("delete_db_on_start"),
         "rgbd_cameras": 1, # Explicitly single camera
@@ -225,28 +267,27 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "rtabmap_viz",
             default_value="true",
-            description="Launch rtabmap_viz.",
+            description="Launch RTAB-Map Visualization GUI.",
         ),
         DeclareLaunchArgument(
-            "enable_pan_tilt",
-            default_value="true",
-            description="Enable Pan-Tilt controller.",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_pan",
+            "pan_limit",
             default_value="4.0",
+            description="Pan limit/amplitude in degrees for scanner. (URDF Limit: -180 to 20 deg)",
         ),
         DeclareLaunchArgument(
-            "pan_tilt_tilt",
+            "tilt_limit",
             default_value="20.0",
+            description="Tilt limit/amplitude in degrees for scanner. (URDF Limit: -180 to 20 deg)",
         ),
         DeclareLaunchArgument(
             "pan_tilt_speed",
             default_value="2.0",
+            description="Movement speed in deg/s.",
         ),
         DeclareLaunchArgument(
             "pan_tilt_sweep",
             default_value="false",
+            description="Enable continuous elliptical sweep.",
         ),
         DeclareLaunchArgument(
             "log_pan_tilt_feedback",
