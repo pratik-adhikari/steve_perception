@@ -23,7 +23,7 @@ graph LR
 - Ubuntu + ROS 2 (tested with **Humble**)
 - `rtabmap_ros` installed (binary is fine for single camera)
 
-Install common dependencies:
+Install dependencies:
 
 ```bash
 sudo apt update
