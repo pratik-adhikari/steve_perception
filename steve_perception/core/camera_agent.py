@@ -85,7 +85,8 @@ class CameraAgent:
         self._debug_rgb_count = 0
         self._debug_depth_count = 0
         self._debug_sync_count = 0
-        self._debug_timer = self.node.create_timer(5.0, self._debug_timer_cb)
+        self._debug_timer_period = 30.0
+        self._debug_timer = self.node.create_timer(self._debug_timer_period, self._debug_timer_cb)
 
         # Register debug callbacks to inspect raw rates
         # message_filters.Subscriber is a SimpleFilter; we can attach multiple callbacks.
@@ -99,9 +100,9 @@ class CameraAgent:
         self._debug_depth_count += 1
 
     def _debug_timer_cb(self):
-        rgb_rate = self._debug_rgb_count / 5.0
-        depth_rate = self._debug_depth_count / 5.0
-        sync_rate = self._debug_sync_count / 5.0
+        rgb_rate = self._debug_rgb_count / self._debug_timer_period
+        depth_rate = self._debug_depth_count / self._debug_timer_period
+        sync_rate = self._debug_sync_count / self._debug_timer_period
         
         self.log.info(
             f"[CameraAgent:{self.name}] RATES (Hz) -> RGB: {rgb_rate:.1f}, "
