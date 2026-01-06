@@ -136,3 +136,49 @@ ros2 run steve_perception pan_tilt_control --pan 30 --tilt -10 --speed 20
   - Mitigations:
     - Make `use_sim_time` consistent across the stack.
     - Increase `wait_for_transform` and/or `tf_delay` slightly (RTAB-Map params).
+
+---
+
+## Scene Graph Pipeline
+
+> **Attribution:** The scene graph pipeline is adapted from [stretch-compose](https://github.com/hrl-labs/stretch-compose) by HRL Laboratories. See `source/README.md` for details.
+
+The pipeline generates semantic scene graphs from RTAB-Map data:
+
+```
+RTAB-Map DB → exporter.py → Mask3D → generator.py → Scene Graph JSON
+```
+
+### Quick Start
+
+The pipeline is fully automated. Run from the package root:
+
+```bash
+# 1. Run the full pipeline (Export -> Inference -> Generation)
+python3 source/scripts/run_scene_graph_pipeline.py data/rtabmap.db
+
+# 2. Visualize the results
+# Point Cloud:
+python3 source/scripts/visualize_mask3d.py data/scene_graph_output
+
+# Texture Mesh with Labels (Best for verification):
+python3 source/scripts/visualize_mesh_labels.py data/scene_graph_output
+
+# Verify Connectivity/Topology (Nodes + Edges):
+python3 source/scripts/visualize_graph_connections.py data/scene_graph_output/scene_graph --mesh data/scene_graph_output/mesh.ply
+```
+
+**Output:** 
+- `data/scene_graph_output/scene_graph/graph.json`: The semantic graph.
+- `data/scene_graph_output/segmented_mesh.ply`: Verifiable mesh.
+
+### Verification
+To verify the output:
+1. Open `segmented_mesh.ply` in **MeshLab** or **CloudCompare**.
+2. Check if the colors match the object classes (e.g., floors, walls, chairs should be distinct).
+3. The `graph.json` should contain nodes for these objects.
+
+*(Add screenshots of your segmented mesh here)*
+
+
+

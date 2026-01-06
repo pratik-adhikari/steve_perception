@@ -15,6 +15,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml') + glob('config/*.ini')),
+        (os.path.join('share', package_name, 'data'), glob('data/*.csv')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +30,8 @@ setup(
         'console_scripts': [
             'perception_node = steve_perception.perception_node:main',
             'pan_tilt_control = steve_perception.utils.pan_tilt.control_node:main',
+            'extract_scene_data = steve_perception.scene_graph.exporter:main',
+            'generate_scene_graph = steve_perception.scene_graph.generator:main',
         ],
     },
 )

@@ -1,6 +1,11 @@
 # steve_perception/utils/tf_utils.py
 import numpy as np
 from geometry_msgs.msg import Transform
+
+# Patch numpy.float for transforms3d compatibility with numpy >= 1.20
+if not hasattr(np, 'float'):
+    np.float = float
+
 from tf_transformations import quaternion_matrix
 
 def transform_to_matrix(t: Transform) -> np.ndarray:
