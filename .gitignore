@@ -6,12 +6,8 @@ __pycache__/
 # Local data
 /data/
 
-# Incomplete/WIP migration from stretch-compose (do not commit)
-/source/
-
 # Generated files
 *_autosave.ini
-generate_mock_masks.py
 
 # Notes (txt files in root)
 /*.txt

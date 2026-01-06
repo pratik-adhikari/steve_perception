@@ -28,6 +28,8 @@ class RGBDFrame:
     depth_m: np.ndarray
     K: np.ndarray
     intr: Intrinsics
+    # Transform from base_frame to camera frame
+    T_base_cam: Optional[np.ndarray] = None
     # Original ROS messages for republishing
     rgb_msg: Optional[Image] = None
     depth_msg: Optional[Image] = None
