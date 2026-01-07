@@ -1,0 +1,39 @@
+# Unified 3D Segmentation Pipeline Configuration
+
+model:
+  # Which model to use: 'openyolo3d' or 'mask3d'
+  name: 'openyolo3d'
+
+inference:
+  # Frame sampling (higher = less memory, faster, but less accurate)
+  frame_step: 10
+  
+  # Confidence threshold for detections
+  conf_threshold: 0.1
+  
+  # Batch size for projection (OpenYOLO3D only)
+  batch_size: 200000
+
+vocabulary:
+  # Vocabulary mode: 'lvis', 'coco', 'furniture', or 'custom'
+  mode: 'furniture'
+  
+  # Custom classes (only used if mode='custom')
+  custom_classes: []
+
+output:
+  # Output directory structure
+  save_detailed_objects: true  # Save individual object PLYs
+  save_scenegraph_format: true  # Save in SceneGraph-compatible format
+  save_visualization: true  # Save colored mesh/point cloud
+
+openyolo3d:
+  # OpenYOLO3D specific settings
+  checkpoint: '/OpenYOLO3D/checkpoints/yolow-l_c512.pth'
+  use_sam: false
+  
+mask3d:
+  # Mask3D specific settings
+  checkpoint: '/Mask3D/saved/scannet200/scannet200_benchmark.ckpt'
+  voxel_size: 0.02
+  use_dbscan: false

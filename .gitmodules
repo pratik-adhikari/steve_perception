@@ -1,0 +1,23 @@
+[submodule "source/models/lib/LostFound"]
+	path = source/models/lib/LostFound
+	url = https://github.com/behretj/LostFound
+
+[submodule "source/models/lib/Mask3D"]
+	path = source/models/lib/Mask3D
+	url = git@github.com:behretj/Mask3D.git
+
+[submodule "source/models/lib/OneFormer3D"]
+	path = source/models/lib/OneFormer3D
+	url = https://github.com/filaPro/oneformer3d.git
+
+[submodule "source/models/lib/OpenMask3D"]
+	path = source/models/lib/OpenMask3D
+	url = https://github.com/OpenMask3D/OpenMask3D
+
+[submodule "source/models/lib/OpenYOLO3D"]
+	path = source/models/lib/OpenYOLO3D
+	url = https://github.com/aminebdj/OpenYOLO3D
+
+[submodule "source/models/lib/Spot-Light"]
+	path = source/models/lib/Spot-Light
+	url = https://github.com/timengelbracht/Spot-Light
