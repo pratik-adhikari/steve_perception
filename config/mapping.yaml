@@ -97,7 +97,7 @@ rtabmap:
   # ==== Output Database Path ====
   # Directory where the RTAB-Map SQLite database will be saved
   # Empty string defaults to ~/.ros/steve_maps/ (set in mapping.launch.py)
-  output_dir: "/media/pratik/ssd_linux/ws/steve_ros2_ws2/steve_ros2_ws/src/steve_perception/data"
+  output_dir: "src/steve_perception/data"
 
   # Filename for the RTAB-Map database (stores the 3D map)
   database_name: rtabmap.db
