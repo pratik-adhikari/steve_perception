@@ -128,33 +128,6 @@ def _launch_setup(context, *args, **kwargs):
         ),
     ]
 
-    # 2. Pan-Tilt Control Node
-    # Determine if we should suppress feedback logs based on launch arg
-    # If log_pan_tilt_feedback is 'false', we append '--no-log-feedback'
-    pan_tilt_node_args = []
-    from launch.substitutions import PythonExpression
-    
-    should_log = LaunchConfiguration("log_pan_tilt_feedback").perform(context).lower() == "true"
-    if not should_log:
-        pan_tilt_node_args.append("--no-log-feedback")
-
-    actions.append(
-        Node(
-            condition=IfCondition(LaunchConfiguration("pan_tilt_sweep")),
-            package="steve_perception",
-            executable="pan_tilt_control",
-            name="pan_tilt_control",
-            output="screen",
-            arguments=pan_tilt_node_args, 
-            parameters=[{
-                "pan": LaunchConfiguration("pan_limit"),
-                "tilt": LaunchConfiguration("tilt_limit"),
-                "speed": LaunchConfiguration("pan_tilt_speed"),
-                "sweep": LaunchConfiguration("pan_tilt_sweep")
-            }]
-        )
-    )
-
     # 3. RTAB-Map Odometry (using rgbd_odometry)
     odom_params = {
         "use_sim_time": use_sim_time,
@@ -268,31 +241,6 @@ def generate_launch_description():
             "rtabmap_viz",
             default_value="true",
             description="Launch RTAB-Map Visualization GUI.",
-        ),
-        DeclareLaunchArgument(
-            "pan_limit",
-            default_value="4.0",
-            description="Pan limit/amplitude in degrees for scanner. (URDF Limit: -180 to 20 deg)",
-        ),
-        DeclareLaunchArgument(
-            "tilt_limit",
-            default_value="20.0",
-            description="Tilt limit/amplitude in degrees for scanner. (URDF Limit: -180 to 20 deg)",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_speed",
-            default_value="2.0",
-            description="Movement speed in deg/s.",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_sweep",
-            default_value="false",
-            description="Enable continuous elliptical sweep.",
-        ),
-        DeclareLaunchArgument(
-            "log_pan_tilt_feedback",
-            default_value="false",
-            description="Enable or disable feedback logging from pan-tilt controller.",
         ),
         OpaqueFunction(function=_launch_setup),
     ])

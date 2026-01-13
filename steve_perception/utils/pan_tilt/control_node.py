@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""ROS 2 Node for controlling the pan-tilt camera."""
 
 import rclpy
 from rclpy.node import Node
@@ -11,181 +12,160 @@ import math
 from steve_perception.utils.pan_tilt.trajectory import create_single_goal_trajectory, create_elliptical_trajectory
 
 class PanTiltController(Node):
-    def __init__(self, pan_deg, tilt_deg, speed_deg_s, sweep=False):
+    def __init__(self):
         super().__init__('pan_tilt_controller_node')
         
-        # Declare ROS parameters (without descriptors to allow loose typing from launch)
-        self.declare_parameter('pan', float(pan_deg))
-        self.declare_parameter('tilt', float(tilt_deg))
-        self.declare_parameter('speed', float(speed_deg_s))
-        self.declare_parameter('sweep', sweep)
-        self.declare_parameter('log_feedback', False)
-        
-        # Read parameters
-        # We explicitly cast to float to handle cases where '4' (int) is passed but we want float
+        # Parameters
+        defaults = {
+            'pan_min': -180.0, 'pan_max': 20.0,
+            'tilt_min': -20.0, 'tilt_max': 20.0,
+            'initial_pan': 0.0, 'initial_tilt': 0.0,
+            'pan_goals': [0.0], 'tilt_goals': [0.0],
+            'speed': 10.0, 'log_feedback': False
+        }
+        for name, val in defaults.items():
+            self.declare_parameter(name, val)
+            
         try:
-            p_val = self.get_parameter('pan').value
-            t_val = self.get_parameter('tilt').value
-            s_val = self.get_parameter('speed').value
+            # Load and converting params
+            p = {k: self.get_parameter(k).value for k in defaults}
+            self.lims = {
+                'pan': (math.radians(float(p['pan_min'])), math.radians(float(p['pan_max']))),
+                'tilt': (math.radians(float(p['tilt_min'])), math.radians(float(p['tilt_max'])))
+            }
+            self.speed_rad_s = math.radians(float(p['speed']))
+            self.log_fb = p['log_feedback']
+
+            # Parse Goals
+            p_goals = self._ensure_list(p['pan_goals'])
+            t_goals = self._ensure_list(p['tilt_goals'])
             
-            self.pan_rad = math.radians(float(p_val))
-            self.tilt_rad = math.radians(float(t_val))
-            self.speed_rad_s = math.radians(float(s_val))
-        except (TypeError, ValueError) as e:
-            self.get_logger().error(f"Failed to parse parameters: {e}")
+            self.pan_c, self.pan_a = self._parse_mode(p_goals, "Pan")
+            self.tilt_c, self.tilt_a = self._parse_mode(t_goals, "Tilt")
+            self.sweep = (self.pan_a > 1e-6 or self.tilt_a > 1e-6)
+
+            # Clamp targets (if fixed) and init
+            if not self.sweep:
+                self.pan_c = self._clamp(self.pan_c, 'pan')
+                self.tilt_c = self._clamp(self.tilt_c, 'tilt')
+                
+            init_p = self._clamp(math.radians(float(p['initial_pan'])), 'pan')
+            init_t = self._clamp(math.radians(float(p['initial_tilt'])), 'tilt')
+            
+        except Exception as e:
+            self.get_logger().error(f"Param Error: {e}")
             raise e
-            
-        self.sweep_mode = bool(self.get_parameter('sweep').value)
+
+        self.cli = ActionClient(self, FollowJointTrajectory, '/pan_tilt_controller/follow_joint_trajectory')
+        # Correct mapping based on URDF analysis:
+        # Base Motor (Pan motion) is named '..._tilt_motor_joint'
+        # Top Motor (Tilt motion) is named '..._pan_motor_joint'
+        self.joint_names = ['pan_tilt_tilt_motor_joint', 'pan_tilt_pan_motor_joint']
         
-        self._action_client = ActionClient(
-            self, 
-            FollowJointTrajectory, 
-            '/pan_tilt_controller/follow_joint_trajectory'
+        self.get_logger().info('Waiting for server...')
+        self.cli.wait_for_server()
+        
+        self.last_log = self.get_clock().now()
+
+        # Start
+        self.get_logger().info(f'Moving to Init: P={math.degrees(init_p):.2f}, T={math.degrees(init_t):.2f}')
+        self._send_traj(
+            create_single_goal_trajectory(init_p, init_t, self.speed_rad_s)[0], 
+            on_success=self.start_main
         )
-        
-        # Mapping: TILT -> joint 0, PAN -> joint 1
-        self.joint_names = ['pan_tilt_pan_motor_joint', 'pan_tilt_tilt_motor_joint']
-        
-        self.get_logger().info('Waiting for action server...')
-        self._action_client.wait_for_server()
-        self.get_logger().info('Action server available.')
 
-        if self.sweep_mode:
-            self.get_logger().info(f'Moving to start position of ellipse: Pan={math.degrees(self.pan_rad):.2f}, Tilt=0.0')
-            self.send_single_goal(self.pan_rad, 0.0, is_approach=True)
+    def start_main(self):
+        self.get_logger().info('Init done. Starting Main.')
+        if self.sweep:
+            self._loop_sweep()
         else:
-            self.send_single_goal(self.pan_rad, self.tilt_rad)
-
-    def send_single_goal(self, target_pan, target_tilt, is_approach=False):
-        goal_msg = FollowJointTrajectory.Goal()
-        goal_msg.trajectory.joint_names = self.joint_names
-        
-        points, duration = create_single_goal_trajectory(target_pan, target_tilt, self.speed_rad_s)
-        goal_msg.trajectory.points = points
-        
-        self.get_logger().info(f'Sending goal: Pan={math.degrees(target_pan):.2f} deg, Tilt={math.degrees(target_tilt):.2f} deg, Duration={duration:.2f} s')
-        
-        self._send_goal_future = self._action_client.send_goal_async(
-            goal_msg, 
-            feedback_callback=self.feedback_callback
-        )
-        
-        if is_approach:
-            self._send_goal_future.add_done_callback(self.approach_response_callback)
-        else:
-            self._send_goal_future.add_done_callback(self.goal_response_callback)
-
-    def send_ellipse_trajectory(self):
-        goal_msg = FollowJointTrajectory.Goal()
-        goal_msg.trajectory.joint_names = self.joint_names
-        
-        points, period = create_elliptical_trajectory(self.pan_rad, self.tilt_rad, self.speed_rad_s)
-        goal_msg.trajectory.points = points
-        
-        self.get_logger().info(f'Sending elliptical trajectory: Period={period:.2f}s, Points={len(points)}')
-        
-        self._send_goal_future = self._action_client.send_goal_async(
-            goal_msg, 
-            feedback_callback=self.feedback_callback
-        )
-        self._send_goal_future.add_done_callback(self.ellipse_response_callback)
-
-    def approach_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().info('Approach goal rejected.')
-            return
-        
-        self.get_logger().info('Approach goal accepted. Moving to start...')
-        self._get_result_future = goal_handle.get_result_async()
-        self._get_result_future.add_done_callback(self.approach_result_callback)
-
-    def approach_result_callback(self, future):
-        result = future.result().result
-        if result.error_code == 0:
-            self.get_logger().info('Reached start position. Starting Ellipse Loop.')
-            self.send_ellipse_trajectory()
-        else:
-            self.get_logger().info(f'Approach failed with error code: {result.error_code}')
-            rclpy.shutdown()
-
-    def ellipse_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().info('Ellipse goal rejected.')
-            rclpy.shutdown()
-            return
-
-        self._get_result_future = goal_handle.get_result_async()
-        self._get_result_future.add_done_callback(self.ellipse_result_callback)
-
-    def ellipse_result_callback(self, future):
-        result = future.result().result
-        if result.error_code == 0:
-            self.get_logger().info('Ellipse cycle complete. Repeating...')
-            self.send_ellipse_trajectory()
-        else:
-            self.get_logger().info(f'Ellipse failed: {result.error_code}')
-            rclpy.shutdown()
-
-    def goal_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().info('Goal rejected :(')
-            return
-        self.get_logger().info('Goal accepted :)')
-        self._get_result_future = goal_handle.get_result_async()
-        self._get_result_future.add_done_callback(self.get_result_callback)
-
-    def get_result_callback(self, future):
-        result = future.result().result
-        self.get_logger().info(f'Goal finished with error_code: {result.error_code}')
-        rclpy.shutdown()
-
-    def feedback_callback(self, feedback_msg):
-        feedback = feedback_msg.feedback
-        current_tilt_rad = feedback.actual.positions[0]
-        current_pan_rad = feedback.actual.positions[1]
-        
-        if self.get_parameter('log_feedback').value:
-            self.get_logger().info(
-                f'Feedback: Pan={math.degrees(current_pan_rad):.2f} deg, Tilt={math.degrees(current_tilt_rad):.2f} deg'
+            self.get_logger().info(f'Holding Target: P={math.degrees(self.pan_c):.2f}, T={math.degrees(self.tilt_c):.2f}')
+            self._send_traj(
+                create_single_goal_trajectory(self.pan_c, self.tilt_c, self.speed_rad_s)[0],
+                on_success=lambda: self.get_logger().info('Target Reached.')
             )
+
+    def _loop_sweep(self):
+        pts, dur = create_elliptical_trajectory(
+            self.pan_c, self.pan_a, self.tilt_c, self.tilt_a, self.speed_rad_s
+        )
+        self.get_logger().info(f'Sweeping (T={dur:.1f}s)...')
+        self._send_traj(pts, on_success=self._loop_sweep)
+
+    def _send_traj(self, points, on_success):
+        msg = FollowJointTrajectory.Goal()
+        msg.trajectory.joint_names = self.joint_names
+        msg.trajectory.points = points
+        
+        future = self.cli.send_goal_async(msg, feedback_callback=self._fb_cb)
+        future.add_done_callback(lambda f: self._on_goal(f, on_success))
+
+    def _on_goal(self, future, on_success):
+        gh = future.result()
+        if not gh.accepted:
+            self.get_logger().warn('Goal Rejected')
+            return
+        gh.get_result_async().add_done_callback(lambda f: self._on_res(f, on_success))
+
+    def _on_res(self, future, on_success):
+        res = future.result().result
+        if res.error_code == 0:
+            on_success()
+        else:
+            self.get_logger().error(f'Goal Failed: {res.error_code}')
+
+    def _fb_cb(self, msg):
+        if not self.log_fb: return
+        
+        now = self.get_clock().now()
+        if (now - self.last_log).nanoseconds < 1e9:
+            return
+        self.last_log = now
+
+        act = msg.feedback.actual.positions
+        des = msg.feedback.desired.positions
+        
+        # Joint 0 = Pan, Joint 1 = Tilt
+        pc, tc = math.degrees(act[0]), math.degrees(act[1])
+        pt, tt = (math.degrees(des[0]), math.degrees(des[1])) if des else (0.0, 0.0)
+        
+        self.get_logger().info(f'Status: Pan[C={pc:.1f}, T={pt:.1f}] Tilt[C={tc:.1f}, T={tt:.1f}]')
+
+    def _clamp(self, val, axis):
+        mn, mx = self.lims[axis]
+        return max(mn, min(val, mx))
+
+    def _ensure_list(self, val):
+        if isinstance(val, str):
+            try: return [float(x) for x in val.replace('[','').replace(']','').split(',') if x.strip()]
+            except: return [0.0]
+        return [float(x) for x in (val if isinstance(val, (list, tuple)) else [val])]
+
+    def _parse_mode(self, goals, name):
+        if not goals: return 0.0, 0.0
+        if len(goals) == 1:
+            self.get_logger().info(f"{name}: Fixed {goals[0]}")
+            return math.radians(goals[0]), 0.0
+        c = (goals[0] + goals[1]) / 2.0
+        a = abs(goals[0] - goals[1]) / 2.0
+        self.get_logger().info(f"{name}: Sweep {goals} (C={c:.1f}, A={a:.1f})")
+        return math.radians(c), math.radians(a)
 
 
 def main(args=None):
-    parser = argparse.ArgumentParser(description='Control Pan-Tilt Camera with Feedback')
-    parser.add_argument('--pan', type=float, default=0.0, help='Pan angle/amplitude (deg)')
-    parser.add_argument('--tilt', type=float, default=0.0, help='Tilt angle/amplitude (deg)')
-    parser.add_argument('--speed', type=float, default=10.0, help='Speed (deg/s)')
-    parser.add_argument('--sweep', action='store_true', help='Enable elliptical sweep mode')
-    parser.add_argument('--log', action='store_true', help='Enable feedback logging')
-    
-    ros_args = None
-    if args is None:
-        args = sys.argv[1:]
-        
-    parsed_args, unknown = parser.parse_known_args(args)
+    rclpy.init(args=args)
 
-    rclpy.init(args=unknown)
-
-    # Initialize with CLI args, which become default values for ROS params
-    node = PanTiltController(
-        parsed_args.pan, 
-        parsed_args.tilt, 
-        parsed_args.speed,
-        sweep=parsed_args.sweep
-    )
-    # Update parameter manually since we didn't pass it to init
-    node.set_parameters([rclpy.parameter.Parameter('log_feedback', value=parsed_args.log)])
+    node = PanTiltController()
 
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(e)
+        node.get_logger().error(f"Exception: {e}")
+    finally:
         if rclpy.ok():
+            node.destroy_node()
             rclpy.shutdown()
 
 if __name__ == '__main__':
