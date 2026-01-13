@@ -1,3 +1,4 @@
+"""Trajectory generation utilities for pan-tilt control."""
 import math
 from trajectory_msgs.msg import JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
@@ -26,13 +27,13 @@ def create_single_goal_trajectory(target_pan_rad, target_tilt_rad, speed_rad_s):
     
     return [point], duration
 
-def create_elliptical_trajectory(pan_amplitude_rad, tilt_amplitude_rad, speed_rad_s):
+def create_elliptical_trajectory(center_pan_rad, pan_amp_rad, center_tilt_rad, tilt_amp_rad, speed_rad_s):
     """
-    Creates an elliptical trajectory.
+    Creates an elliptical trajectory centered at (center_pan, center_tilt).
     Returns: (points_list, period_in_seconds)
     """
-    A = pan_amplitude_rad
-    B = tilt_amplitude_rad
+    A = pan_amp_rad
+    B = tilt_amp_rad
     
     max_amplitude = max(abs(A), abs(B))
     if max_amplitude < 1e-6:
@@ -52,11 +53,11 @@ def create_elliptical_trajectory(pan_amplitude_rad, tilt_amplitude_rad, speed_ra
     for i in range(num_points + 1): # +1 to close the loop perfectly
         t = i * time_step
         # Parametric equations
-        # Pan = A * cos(omega * t)
-        # Tilt = B * sin(omega * t)
+        # Pan = Center + A * cos(omega * t)
+        # Tilt = Center + B * sin(omega * t)
         
-        p_val = A * math.cos(omega * t)
-        t_val = B * math.sin(omega * t)
+        p_val = center_pan_rad + A * math.cos(omega * t)
+        t_val = center_tilt_rad + B * math.sin(omega * t)
         
         # Velocities (derivatives)
         v_p = -A * omega * math.sin(omega * t)
