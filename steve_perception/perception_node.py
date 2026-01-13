@@ -113,9 +113,16 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = PerceptionNode()
     executor = MultiThreadedExecutor()
-    rclpy.spin(node, executor=executor)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node, executor=executor)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
