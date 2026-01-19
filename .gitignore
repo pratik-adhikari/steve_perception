@@ -1,15 +1,33 @@
+# Data and Results
+data/
+results/
+*.db
+*.ply
+*.obj
+*.jpg
+*.png
+*.log
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
 
-# Local data
-/data/
+# IDE
+.vscode/
+.idea/
 
-# Generated files
-*_autosave.ini
+# System
+.DS_Store
 
-# Notes (txt files in root)
-/*.txt
-
-tutorial/
+# Temporary scripts
+test_*.py
+*diff.md
+*plan.md
+*status.md
