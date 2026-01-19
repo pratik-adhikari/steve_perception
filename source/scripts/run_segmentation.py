@@ -6,17 +6,18 @@ Single entry point for all segmentation models.
 import argparse
 import sys
 import os
+
+# CRITICAL: Ensure source directory is in python path BEFORE any local imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import yaml
 import shutil
 import numpy as np
 
-# Ensure source directory is in python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 from models.adapters.base_adapter import SegmentationResult
 from models.adapters.openyolo3d_adapter import OpenYolo3DAdapter
 from models.adapters.mask3d_adapter import Mask3DAdapter
-from utils.vocabulary import load_vocabulary
+from utils_source.vocabulary import load_vocabulary
 
 def save_scenegraph_format(result: SegmentationResult, output_dir: str, config):
     """Save results in SceneGraph-compatible format."""
@@ -187,6 +188,18 @@ Examples:
             
         if config['output'].get('save_detailed_objects', True):
             save_detailed_objects(result, args.output, vocabulary, config)
+        
+        # Generate scene graph
+        if config['output'].get('generate_scene_graph', False):
+            try:
+                import subprocess
+                script_dir = os.path.dirname(__file__)
+                sg_script = os.path.join(script_dir, 'build_scene_graph.py')
+                cmd = [sys.executable, sg_script, '--input', args.output, '--output', args.output]
+                print(f"[Pipeline] Generating scene graph...")
+                subprocess.run(cmd, check=True)
+            except Exception as e:
+                print(f"[WARNING] Scene graph generation failed: {e}")
             
         return 0
     except Exception as e:

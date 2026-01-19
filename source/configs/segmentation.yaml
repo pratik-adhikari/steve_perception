@@ -26,14 +26,17 @@ output:
   save_detailed_objects: true  # Save individual object PLYs
   save_scenegraph_format: true  # Save in SceneGraph-compatible format
   save_visualization: true  # Save colored mesh/point cloud
+  generate_scene_graph: true  # Automatically generate scene graph after segmentation
 
 openyolo3d:
   # OpenYOLO3D specific settings
-  checkpoint: '/OpenYOLO3D/checkpoints/yolow-l_c512.pth'
+  # Path relative to project root (steve_perception/)
+  config_path: 'source/models/lib/OpenYOLO3D/pretrained/config.yaml'
   use_sam: false
   
 mask3d:
   # Mask3D specific settings
-  checkpoint: '/Mask3D/saved/scannet200/scannet200_benchmark.ckpt'
+  # Path relative to Mask3D library root
+  checkpoint: 'saved/scannet200/scannet200_benchmark.ckpt'
   voxel_size: 0.02
   use_dbscan: false
