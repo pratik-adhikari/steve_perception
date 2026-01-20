@@ -12,7 +12,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../..'))
-from utils.vocabulary import load_vocabulary
+from utils_source.vocabulary import load_vocabulary
 
 
 def save_detailed_results(model, prediction, output_path: str, text_prompts: list, conf_thresh: float = 0.1):

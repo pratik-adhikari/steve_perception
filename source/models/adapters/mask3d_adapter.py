@@ -7,11 +7,10 @@ import os
 import numpy as np
 from typing import Dict, Any, List
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../wrappers/mask3d'))
-from mask3d import run_mask3d
+from utils_source.mask3d_interface import run_mask3d
 
 from models.adapters.base_adapter import BaseSegmentationAdapter, SegmentationResult
-from utils.gpu_monitor import GPUMonitor, GPUEstimator
+from utils_source.gpu_monitor import GPUMonitor, GPUEstimator
 
 
 class Mask3DAdapter(BaseSegmentationAdapter):

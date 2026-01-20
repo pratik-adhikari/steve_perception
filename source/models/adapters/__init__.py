@@ -1,13 +1,12 @@
 """
-Model adapters initialization.
+Segmentation adapters for unified pipeline.
 """
-from .base_adapter import SegmentationResult, BaseSegmentationAdapter
-from .openyolo3d_adapter import OpenYolo3DAdapter
-from .mask3d_adapter import Mask3DAdapter
+from .base_adapter import BaseSegmentationAdapter, SegmentationResult
+
+# Adapters are imported on-demand in run_segmentation.py
+# Don't import them here to avoid circular import issues
 
 __all__ = [
-    'SegmentationResult',
     'BaseSegmentationAdapter',
-    'OpenYolo3DAdapter',
-    'Mask3DAdapter',
+    'SegmentationResult',
 ]
