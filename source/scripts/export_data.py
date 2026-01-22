@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.export_utils import point_cloud_generator, mesh_processor, calibration_utils
+from utils_source.export_utils import point_cloud_generator, mesh_processor, calibration_utils
 
 
 def setup_logger(output_dir):
@@ -53,16 +53,19 @@ def get_relative_path(path, cwd):
 def setup_directories(output_dir):
     """Create directory structure and return directory paths."""
     export_dir = output_dir / "export"
-    frames_dir = export_dir / "frames"
     metadata_dir = export_dir / "metadata"
     
-    for d in [frames_dir / "color", frames_dir / "depth", frames_dir / "pose", frames_dir / "intrinsic", export_dir / "textures", metadata_dir]:
+    # Flat structure: color, depth, poses, textures, metadata
+    # scan_dir/color/0.jpg
+    # scan_dir/depth/0.png
+    # scan_dir/poses/0.txt
+    for d in [export_dir / "color", export_dir / "depth", export_dir / "poses", export_dir / "textures", metadata_dir]:
         d.mkdir(parents=True, exist_ok=True)
     
     raw_dir = output_dir / "raw_export"
     raw_dir.mkdir(exist_ok=True)
     
-    return {'export': export_dir, 'frames': frames_dir, 'metadata': metadata_dir, 'raw': raw_dir}
+    return {'export': export_dir, 'metadata': metadata_dir, 'raw': raw_dir}
 
 
 def run_cmd(logger, cmd, description):
@@ -85,7 +88,7 @@ def export_rtabmap_data(logger, raw_dir, input_db):
             "Extracting mesh...")
 
 
-def organize_frames(logger, raw_dir, frames_dir):
+def organize_frames(logger, raw_dir, export_dir):
     """Organize and process frames from raw export."""
     poses_file = raw_dir / "rtabmap_poses.txt"
     if not poses_file.exists():
@@ -109,12 +112,13 @@ def organize_frames(logger, raw_dir, frames_dir):
             logger.warning(f"Skipping frame {stamp}: no pose")
             continue
         
-        frame_idx = f"{count:06d}"
-        shutil.copy(img_path, frames_dir / "color" / f"{frame_idx}.jpg")
+        # ScanNet format: integer based, no padding (e.g. 0.jpg, 0.png, 0.txt)
+        frame_idx = f"{count}"
+        shutil.copy(img_path, export_dir / "color" / f"{frame_idx}.jpg")
         
         depth_cand = depth_src / f"{stamp}.png"
         if depth_cand.exists():
-            shutil.copy(depth_cand, frames_dir / "depth" / f"{frame_idx}.png")
+            shutil.copy(depth_cand, export_dir / "depth" / f"{frame_idx}.png")
         else:
             stats['missing_depth'] += 1
             
@@ -133,12 +137,15 @@ def organize_frames(logger, raw_dir, frames_dir):
                 K_4x4 = first_intrinsic
         
         T_world_cam = poses[stamp] @ T_local
-        calibration_utils.save_matrix(T_world_cam, frames_dir / "pose" / f"{frame_idx}.txt")
-        calibration_utils.save_matrix(K_4x4, frames_dir / "intrinsic" / f"{frame_idx}.txt")
+        # Save pose: poses/0.txt
+        calibration_utils.save_matrix(T_world_cam, export_dir / "poses" / f"{frame_idx}.txt")
+        # Note: We do NOT save per-frame intrinsics anymore
+        
         count += 1
     
+    # Save single intrinsics.txt at root
     calib_4x4 = first_intrinsic if first_intrinsic is not None else np.eye(4)
-    calibration_utils.save_matrix(calib_4x4, frames_dir / "intrinsic" / "intrinsic_color.txt")
+    calibration_utils.save_matrix(calib_4x4, export_dir / "intrinsics.txt")
     
     logger.info(f"Organized {count} frames")
     for key, val in stats.items():
@@ -167,7 +174,8 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
         mesh = mesh_processor.clean_mesh(mesh)
         export_stats['mesh_vertices'] = len(mesh.vertices)
         export_stats['mesh_triangles'] = len(mesh.triangles)
-        mesh_processor.save_mesh_ply(mesh, export_dir / "mesh.ply")
+        # Save raw mesh with a name that won't be picked up by OpenYOLO3D as the primary scene
+        mesh_processor.save_mesh_ply(mesh, export_dir / "mesh_raw.ply")
         logger.info(f"Saved mesh: {len(mesh.vertices):,} vertices")
     except Exception as e:
         logger.error(f"Mesh processing failed: {e}")
@@ -180,7 +188,8 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
         logger.warning(f"Texture copy failed: {e}")
     
     logger.info("Creating point cloud...")
-    pcd_output = export_dir / "dense.pcd"
+    # OpenYOLO3D and others expect a colored point cloud, often named scene.ply in ScanNet
+    pcd_output = export_dir / "scene.ply"
     if point_cloud_generator.create_point_cloud_pipeline(mesh_file, pcd_output, max_points, voxel_size):
         import open3d as o3d
         pcd = o3d.io.read_point_cloud(str(pcd_output))
@@ -239,7 +248,8 @@ def main():
     export_rtabmap_data(logger, dirs['raw'], input_db)
     
     logger.info("Organizing frames...")
-    frame_count, frame_stats = organize_frames(logger, dirs['raw'], dirs['frames'])
+    # dirs['frames'] was removed, passing dirs['export'] instead
+    frame_count, frame_stats = organize_frames(logger, dirs['raw'], dirs['export'])
     
     logger.info("Processing mesh and point cloud...")
     mesh_stats = process_mesh_and_pcd(logger, dirs['export'], dirs['raw'], args.max_points, args.voxel_size)
