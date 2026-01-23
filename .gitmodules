@@ -16,7 +16,7 @@
 
 [submodule "source/models/lib/OpenYOLO3D"]
 	path = source/models/lib/OpenYOLO3D
-	url = https://github.com/aminebdj/OpenYOLO3D
+	url = https://github.com/pratik-adhikari/OpenYOLO3D
 
 [submodule "source/models/lib/Spot-Light"]
 	path = source/models/lib/Spot-Light
