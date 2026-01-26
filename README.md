@@ -137,6 +137,23 @@ ros2 run steve_perception pan_tilt_control --pan 30 --tilt -10 --speed 20
     - Make `use_sim_time` consistent across the stack.
     - Increase `wait_for_transform` and/or `tf_delay` slightly (RTAB-Map params).
 
+## Run with Docker
+
+To run the segmentation pipeline using the official Docker image:
+
+```bash
+docker run --rm --gpus all \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e PYTHONPATH="/workspace/source" \
+  steve_perception:unified \
+  python3 source/scripts/run_segmentation.py \
+  --scene data/pipeline_output/export \
+  --output results/my_run \
+  --model openyolo3d \
+  --vocab furniture
+```
+
 ---
 
 ## Scene Graph Pipeline
