@@ -1,7 +1,7 @@
 import open3d as o3d
 import glob
 import os
-from steve_utils.recursive_config import Config
+from utils_source.recursive_config import Config
 
 
 def load_point_clouds(path):

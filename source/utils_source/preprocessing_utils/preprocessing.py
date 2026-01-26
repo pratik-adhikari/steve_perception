@@ -6,7 +6,7 @@ import cv2
 import glob
 import json
 
-from steve_utils.preprocessing_utils.drawer_integration import register_drawers
+from utils_source.preprocessing_utils.drawer_integration import register_drawers
 
 def pose_ipad_pointcloud(scan_dir, pcd_path=None, marker_type=cv2.aruco.DICT_APRILTAG_36h11, aruco_length=0.148, vis_detection=False):
     """ Finds the first aruco marker in the given iPad scan and returns the pose of the marker in the world frame."""

@@ -7,9 +7,9 @@ import open3d.visualization.rendering as rendering # type: ignore
 import os
 import random
 from scipy.spatial import KDTree
-from typing import Optional
+from typing import Optional, Tuple, List
 
-from steve_utils.preprocessing_utils.graph_nodes import DrawerNode, ObjectNode
+from utils_source.preprocessing_utils.graph_nodes import DrawerNode, ObjectNode
 
 class SceneGraph:
     """
@@ -243,7 +243,12 @@ class SceneGraph:
         
         for node in self.nodes.values():
             self.update_connection(node)
-        self.tree = KDTree(np.array([self.nodes[index].centroid for index in self.ids]))
+        
+        if len(self.ids) > 0:
+            self.tree = KDTree(np.array([self.nodes[index].centroid for index in self.ids]))
+        else:
+            print("[SceneGraph] Warning: No nodes detected. KDTree not built.")
+            self.tree = None
         self.color_with_ibm_palette()
         self.check_drawers_inside_shelf()
         
@@ -280,7 +285,7 @@ class SceneGraph:
         _, idx = self.tree.query(point)
         return self.ids[idx]
     
-    def nearest_node(self, point: Optional[np.ndarray]) -> tuple[float, Optional[int]]:
+    def nearest_node(self, point: Optional[np.ndarray]) -> Tuple[float, Optional[int]]:
         """
         Finds the nearest movable (and visible) node to the specified point.
 
@@ -355,7 +360,7 @@ class SceneGraph:
         for category in categories:
             self.remove_category(category)
 
-    def query_object(self) -> tuple[np.ndarray, int]:
+    def query_object(self) -> Tuple[np.ndarray, int]:
         """
         Visualizes the scene graph and allows the user to select a point interactively.
 
@@ -433,7 +438,7 @@ class SceneGraph:
             if node.movable:
                 node.color = colors[random.randint(0, len(colors)-1)]
            
-    def scene_geometries(self, centroids: bool = True, connections: bool = True) -> list[tuple]:
+    def scene_geometries(self, centroids: bool = True, connections: bool = True) -> List[Tuple]:
         """
         Retrieves all geometries in the scene graph, optionally including centroids and connections.
 

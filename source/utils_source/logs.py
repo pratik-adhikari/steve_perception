@@ -1,7 +1,7 @@
 import logging
 import os.path
 
-from steve_utils.recursive_config import Config
+from utils_source.recursive_config import Config
 
 
 class ProjectLogger(logging.Logger):

@@ -106,7 +106,7 @@ def reset_singletons(singletons: Iterable[_Singleton]):
 
 
 # from robot_utils.frame_transformer import FrameTransformerSingleton
-# from steve_utils.singletons import (
+# from utils_source.singletons import (
 #     GraphNavClientSingleton,
 #     ImageClientSingleton,
 #     RobotCommandClientSingleton,

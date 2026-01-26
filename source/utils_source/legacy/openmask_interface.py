@@ -10,9 +10,9 @@ import clip
 import open3d as o3d
 import requests
 from urllib3.exceptions import ReadTimeoutError
-from steve_utils import recursive_config
-from steve_utils.docker_communication import _get_content
-from steve_utils.recursive_config import Config
+from utils_source import recursive_config
+from utils_source.docker_communication import _get_content
+from utils_source.recursive_config import Config
 from sklearn.cluster import DBSCAN
 
 MODEL, PREPROCESS = clip.load("ViT-L/14@336px", device="cpu")

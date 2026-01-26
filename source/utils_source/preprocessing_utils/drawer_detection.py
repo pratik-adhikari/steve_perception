@@ -10,10 +10,10 @@ import numpy as np
 import cv2
 from matplotlib import pyplot as plt
 import colorsys
-from steve_utils.docker_communication import save_files, send_request
+from utils_source.docker_communication import save_files, send_request
 from collections import namedtuple
 
-from steve_utils.recursive_config import Config
+from utils_source.recursive_config import Config
 
 BBox = namedtuple("BBox", ["xmin", "ymin", "xmax", "ymax"])
 Detection = namedtuple("Detection", ["file", "name", "conf", "bbox"])

@@ -4,8 +4,8 @@ import logging
 import os
 from datetime import datetime
 
-from steve_utils.recursive_config import Config
-from steve_utils.singletons import _SingletonWrapper
+from utils_source.recursive_config import Config
+from utils_source.singletons import _SingletonWrapper
 
 
 class TimedFileLogger:

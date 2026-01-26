@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import yaml
-from steve_utils.recursive_config import Config
+from utils_source.recursive_config import Config
 
 
 def _load_environment_file(config: Config) -> dict:

@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from steve_utils.geometry.coordinates import Pose2D
-from steve_utils.mask3D_interface import is_valid_label
+from utils_source.geometry.coordinates import Pose2D
+from utils_source.mask3D_interface import is_valid_label
 
 
 def get_wanted_item_mask3d(max_retries: int = 3) -> str:

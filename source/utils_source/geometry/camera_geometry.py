@@ -1,7 +1,7 @@
 import numpy as np
 
 import open3d as o3d
-from steve_utils import vis
+from utils_source import vis
 
 
 def plane_fitting_open3d(pcd: np.ndarray, threshold: float = 0.01, min_samples: int = 3, n_iterations: int = 1000, vis_block: bool = False):

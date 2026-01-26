@@ -10,10 +10,10 @@ import numpy as np
 
 import open3d as o3d
 import pandas as pd
-from steve_utils import recursive_config
-from steve_utils.importer import PointCloud
-from steve_utils.scannet_200_labels import CLASS_LABELS_200, VALID_CLASS_IDS_200
-from steve_utils.vis import generate_distinct_colors
+from utils_source import recursive_config
+from utils_source.importer import PointCloud
+from utils_source.scannet_200_labels import CLASS_LABELS_200, VALID_CLASS_IDS_200
+from utils_source.vis import generate_distinct_colors
 
 
 def is_valid_label(item: str) -> bool:

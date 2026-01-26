@@ -14,8 +14,8 @@ from stretch_package.stretch_movement.move_head import HeadJointController
 from stretch_package.stretch_movement.stow_arm import StowArmController
 from stretch_package.stretch_state.jointstate_subscriber import JointStateSubscriber
 from stretch_package.stretch_state.odom_subscriber import OdomSubscriber
-from steve_utils.geometry.coordinates import Pose2D, Pose3D
-from steve_utils.robot_utils.global_parameters import *
+from utils_source.geometry.coordinates import Pose2D, Pose3D
+from utils_source.robot_utils.global_parameters import *
 
 
 def spin_until_complete(node: Node) -> None:

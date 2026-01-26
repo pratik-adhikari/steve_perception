@@ -4,18 +4,18 @@ import time
 import numpy as np
 import open3d as o3d
 
-from steve_utils.robot_utils.global_parameters import *
-from steve_utils.robot_utils.basic_perception import check_object_distance
-from steve_utils.robot_utils.basic_movement import *
+from utils_source.robot_utils.global_parameters import *
+from utils_source.robot_utils.basic_perception import check_object_distance
+from utils_source.robot_utils.basic_movement import *
 from scipy.spatial.transform import Rotation
-from steve_utils import vis
-from steve_utils.geometry.coordinates import Pose2D, Pose3D, from_a_to_b_distanced, pose_distanced, get_door_opening_poses
-from steve_utils.graspnet_interface import predict_full_grasp
+from utils_source import vis
+from utils_source.geometry.coordinates import Pose2D, Pose3D, from_a_to_b_distanced, pose_distanced, get_door_opening_poses
+from utils_source.graspnet_interface import predict_full_grasp
 from gpd.gpd_client_api import predict_full_grasp as gpd_predict_full_grasp
-from steve_utils.importer import PointCloud
-from steve_utils.geometry.point_clouds import icp
-from steve_utils.recursive_config import Config
-from steve_utils.time import convert_time
+from utils_source.importer import PointCloud
+from utils_source.geometry.point_clouds import icp
+from utils_source.recursive_config import Config
+from utils_source.time import convert_time
 from scripts.my_robot_scripts.graspnet_testing import visualize_grasps
 from stretch_package.stretch_movement.move_body import BaseController
 from stretch_package.stretch_movement.move_to_pose import JointPoseController

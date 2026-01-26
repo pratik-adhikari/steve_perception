@@ -10,11 +10,11 @@ import numpy as np
 import cv2
 from matplotlib import pyplot as plt
 from scipy.optimize import linear_sum_assignment
-from steve_utils.docker_communication import save_files, send_request
-from steve_utils.files import prep_tmp_path
-from steve_utils.object_detetion import BBox, Detection, Match
-from steve_utils.recursive_config import Config
-from steve_utils.vis import draw_boxes, generate_distinct_colors
+from utils_source.docker_communication import save_files, send_request
+from utils_source.files import prep_tmp_path
+from utils_source.object_detetion import BBox, Detection, Match
+from utils_source.recursive_config import Config
+from utils_source.vis import draw_boxes, generate_distinct_colors
 
 COLORS = {
     "door": (0.651, 0.243, 0.957),

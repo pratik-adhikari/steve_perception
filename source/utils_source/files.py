@@ -5,7 +5,7 @@ Util functions for file management.
 import os
 import shutil
 
-from steve_utils.recursive_config import Config
+from utils_source.recursive_config import Config
 
 
 def prep_tmp_path(config: Config) -> str:

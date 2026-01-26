@@ -7,9 +7,9 @@ from typing import Optional
 import numpy as np
 
 import cv2
-from steve_utils.docker_communication import save_files, send_request
-from steve_utils.files import prep_tmp_path
-from steve_utils.recursive_config import Config
+from utils_source.docker_communication import save_files, send_request
+from utils_source.files import prep_tmp_path
+from utils_source.recursive_config import Config
 
 
 def predict(

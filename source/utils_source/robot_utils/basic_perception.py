@@ -16,9 +16,9 @@ from stretch_package.stretch_images.camera_info_subscriber import CameraInfoSubs
 from stretch_package.stretch_state.frame_transformer import FrameTransformer
 from stretch_package.stretch_movement.move_to_pose import JointPoseController
 
-from steve_utils.robot_utils.basic_movement import set_gripper, spin_until_complete
-from steve_utils.importer import PointCloud, Vector3dVector 
-from steve_utils.recursive_config import Config
+from utils_source.robot_utils.basic_movement import set_gripper, spin_until_complete
+from utils_source.importer import PointCloud, Vector3dVector 
+from utils_source.recursive_config import Config
 
 
 ALL_IMAGE_GREYSCALE_SOURCES = (

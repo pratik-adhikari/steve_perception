@@ -13,14 +13,14 @@ from typing import Any, Optional
 import numpy as np
 import math
 import open3d as o3d
-from steve_utils import recursive_config
-from steve_utils.geometry.coordinates import (Pose3D,_rotation_from_direction,get_uniform_sphere_directions,remove_duplicate_rows)
-from steve_utils.docker_communication import save_files, send_request
-from steve_utils.files import prep_tmp_path
-from steve_utils.importer import PointCloud
-from steve_utils.openmask_interface import get_mask_points
-from steve_utils.geometry.point_clouds import get_radius_env_cloud
-from steve_utils.recursive_config import Config
+from utils_source import recursive_config
+from utils_source.geometry.coordinates import (Pose3D,_rotation_from_direction,get_uniform_sphere_directions,remove_duplicate_rows)
+from utils_source.docker_communication import save_files, send_request
+from utils_source.files import prep_tmp_path
+from utils_source.importer import PointCloud
+from utils_source.openmask_interface import get_mask_points
+from utils_source.geometry.point_clouds import get_radius_env_cloud
+from utils_source.recursive_config import Config
 
 # CONSTANTS
 # max gripper width is 0.175m, but in nn is 0.100m, therefore we scale models

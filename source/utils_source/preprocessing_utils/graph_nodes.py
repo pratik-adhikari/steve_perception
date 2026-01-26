@@ -236,7 +236,7 @@ class DrawerNode(ObjectNode):
         # [User Request] Changed to get_oriented_bounding_box because get_minimal_oriented_bounding_box was removed in Open3D 0.16.0
         self.box = tmp_pcd.get_oriented_bounding_box()
     
-    def compute_intersection(self, ray_start: np.ndarray) -> np.ndarray | None:
+    def compute_intersection(self, ray_start: np.ndarray) -> Optional[np.ndarray]:
         """
         This method calculates the intersection point of a ray, starting from `ray_start`, with the plane defined by the object's equation.
 

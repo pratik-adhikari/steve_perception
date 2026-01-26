@@ -4,11 +4,11 @@ import numpy as np
 import cv2, os, glob, pickle, sys
 from sklearn.cluster import MeanShift, KMeans, DBSCAN
 from math import ceil
-from steve_utils.preprocessing_utils.projecting import detections_to_bboxes
-from steve_utils.preprocessing_utils.drawer_detection import predict_yolodrawer
+from utils_source.preprocessing_utils.projecting import detections_to_bboxes
+from utils_source.preprocessing_utils.drawer_detection import predict_yolodrawer
 import scipy.cluster.hierarchy as hcluster
 import json
-from steve_utils.preprocessing_utils.projecting import project_points_bbox
+from utils_source.preprocessing_utils.projecting import project_points_bbox
 from collections import namedtuple
 
 BBox = namedtuple("BBox", ["xmin", "ymin", "xmax", "ymax"])

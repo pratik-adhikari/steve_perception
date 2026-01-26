@@ -2,10 +2,10 @@
 Library open3d is a bit finicky with imports.
 One can either import from cuda (for GPU-enables machines) or cpu (for others).
 By checking the config, based on the "device" attribute, we can decide which one to import.
-For use simply import from steve_utils.importer, i.e. "from steve_utils.importer import Pointcloud".
+For use simply import from utils_source.importer, i.e. "from utils_source.importer import Pointcloud".
 """
 
-from steve_utils.recursive_config import Config
+from utils_source.recursive_config import Config
 
 _conf = Config()
 if _conf["device"] == "cuda":

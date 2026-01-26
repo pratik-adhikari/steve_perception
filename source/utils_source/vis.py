@@ -12,8 +12,8 @@ import numpy as np
 import cv2
 import open3d as o3d
 from matplotlib import pyplot as plt
-from steve_utils.importer import PointCloud, Vector3dVector
-from steve_utils.object_detetion import Detection
+from utils_source.importer import PointCloud, Vector3dVector
+from utils_source.object_detetion import Detection
 
 
 def normalize_image(image: np.ndarray) -> np.ndarray:
