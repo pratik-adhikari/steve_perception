@@ -8,7 +8,14 @@ import numpy as np
 import torch
 from typing import Dict, Any, List
 
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../wrappers/openyolo3d'))
+
+# Ensure Mask3D submodule is in path
+mask3d_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../lib/OpenYOLO3D/models/Mask3D'))
+if mask3d_path not in sys.path:
+    sys.path.insert(0, mask3d_path)
+
 from interface import OpenYolo3DInterface
 
 from models.adapters.base_adapter import BaseSegmentationAdapter, SegmentationResult

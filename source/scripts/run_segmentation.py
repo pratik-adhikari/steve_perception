@@ -19,6 +19,21 @@ from models.adapters.openyolo3d_adapter import OpenYolo3DAdapter
 from models.adapters.mask3d_adapter import Mask3DAdapter
 from utils_source.vocabulary import load_vocabulary
 
+def save_label_mapping(vocabulary: list, output_dir: str):
+    """Save vocabulary to CSV for SceneGraph builder."""
+    import pandas as pd
+    csv_path = os.path.join(output_dir, 'mask3d_label_mapping.csv')
+    
+    # Create DataFrame with 'id' and 'category' columns
+    df = pd.DataFrame({
+        'id': range(len(vocabulary)),
+        'category': vocabulary
+    })
+    
+    # Save to CSV
+    df.to_csv(csv_path, index=False)
+    print(f"[Pipeline] Saved label mapping to {csv_path}")
+
 def save_scenegraph_format(result: SegmentationResult, output_dir: str, config):
     """Save results in SceneGraph-compatible format."""
     mask3d_dir = os.path.join(output_dir, 'mask3d_output')
@@ -181,6 +196,9 @@ Examples:
         
         print(f"\n[SUCCESS] Segmentation complete!")
         print(f"  Instances: {len(result.scores)}")
+        
+        # Save Label Mapping (Critical for SceneGraph)
+        save_label_mapping(vocabulary, args.output)
         
         # Save Outputs
         if config['output'].get('save_scenegraph_format', True):
