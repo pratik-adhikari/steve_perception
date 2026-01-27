@@ -44,6 +44,9 @@ class OpenYolo3DAdapter(BaseSegmentationAdapter):
         Returns:
             SegmentationResult with standardized outputs
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         os.makedirs(output_dir, exist_ok=True)
         
         # Get config path - resolve relative to project root
@@ -58,11 +61,16 @@ class OpenYolo3DAdapter(BaseSegmentationAdapter):
         conf_thresh = self.config.get('inference', {}).get('conf_threshold', 0.1)
         depth_scale = self.config.get('inference', {}).get('depth_scale', 1000.0)
         
-        print(f"[OpenYOLO3D] Initializing with frame_step={frame_step}, conf={conf_thresh}")
-        print(f"[OpenYOLO3D] Config path: {config_path}")
+        logger.info(f"[OpenYOLO3D Adapter] Initializing with frame_step={frame_step}, conf={conf_thresh}")
+        logger.info(f"[OpenYOLO3D Adapter] Config path: {config_path}")
+        logger.info(f"[OpenYOLO3D Adapter] Vocabulary: {len(vocabulary)} classes")
+        logger.info(f"[OpenYOLO3D Adapter] Vocabulary classes: {vocabulary}")
+        logger.info(f"[OpenYOLO3D Adapter] Depth scale: {depth_scale}")
+        logger.info(f"[OpenYOLO3D Adapter] Scene path: {scene_path}")
         
         if self.interface is None:
             self.interface = OpenYolo3DInterface(config_path)
+            logger.info(f"[OpenYOLO3D Adapter] Interface initialized")
         
         prediction = self.interface.predict(
             scene_path=scene_path,
@@ -77,12 +85,15 @@ class OpenYolo3DAdapter(BaseSegmentationAdapter):
                 masks = prediction['masks']
                 classes = prediction['classes']
                 scores = prediction['scores']
+                logger.info(f"[OpenYOLO3D Adapter] Extracted from dict: masks={masks.shape}, classes={classes.shape}, scores={scores.shape}")
             else:
                 # Fallback for {scene_name: tuple} structure if applicable
                 prediction = next(iter(prediction.values()))
                 masks, classes, scores = prediction
+                logger.info(f"[OpenYOLO3D Adapter] Extracted from scene dict: masks={masks.shape}, classes={classes.shape}, scores={scores.shape}")
         else:
             masks, classes, scores = prediction
+            logger.info(f"[OpenYOLO3D Adapter] Extracted from tuple: masks={masks.shape}, classes={classes.shape}, scores={scores.shape}")
         
         import open3d as o3d
         mesh_path = os.path.join(scene_path, 'mesh.ply')
@@ -102,6 +113,13 @@ class OpenYolo3DAdapter(BaseSegmentationAdapter):
         masks_np = masks.cpu().numpy()
         classes_np = classes.cpu().numpy()
         scores_np = scores.cpu().numpy()
+        
+        logger.info(f"[OpenYOLO3D Adapter] Returning result:")
+        logger.info(f"[OpenYOLO3D Adapter]   → masks: {masks_np.shape}, dtype: {masks_np.dtype}")
+        logger.info(f"[OpenYOLO3D Adapter]   → classes: {classes_np.shape}, dtype: {classes_np.dtype}")
+        logger.info(f"[OpenYOLO3D Adapter]   → scores: {scores_np.shape}, dtype: {scores_np.dtype}")
+        logger.info(f"[OpenYOLO3D Adapter]   → points: {points.shape if points is not None else None}")
+        logger.info(f"[OpenYOLO3D Adapter]   → Total instances: {len(scores_np)}")
         
         return SegmentationResult(
             masks=masks_np,

@@ -31,3 +31,4 @@ test_*.py
 *diff.md
 *plan.md
 *status.md
+docs/ARCHITECTURE_AND_PROPOSALS.md

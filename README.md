@@ -148,11 +148,20 @@ docker run --rm --gpus all \
   -e PYTHONPATH="/workspace/source" \
   steve_perception:unified \
   python3 source/scripts/run_segmentation.py \
-  --scene data/pipeline_output/export \
-  --output results/my_run \
+  --data data/pipeline_output \
   --model openyolo3d \
   --vocab furniture
 ```
+
+**Arguments:**
+*   `--data`: Path to data directory. Must contain an `export/` folder (from `export_data.py`).
+*   `--model`: Model to use (`openyolo3d` or `mask3d`).
+*   `--vocab`: Vocabulary mode: `furniture` (default), `lvis`, `coco`, or `custom`.
+
+**Outputs:**
+*   All outputs are saved to the `--data` directory:
+    *   `<data>/<model>_output/`: Segmentation results (masks, objects).
+    *   `<data>/logs/`: Full execution logs.
 
 ---
 

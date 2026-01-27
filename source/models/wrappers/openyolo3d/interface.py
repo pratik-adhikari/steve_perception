@@ -38,9 +38,16 @@ class OpenYolo3DInterface:
         :param depth_scale: Depth scaling factor (default: 1000.0 for typical depth sensors)
         :return: Prediction dictionary with masks, classes, and scores
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Update frequency/frame_step in the model config dynamically
         if self.model and hasattr(self.model, 'openyolo3d_config'):
             self.model.openyolo3d_config['openyolo3d']['frequency'] = frame_step
+            logger.info(f"[OpenYOLO3D Interface] Set frame_step/frequency = {frame_step}")
+        
+        logger.info(f"[OpenYOLO3D Interface] Running prediction with {len(text_prompts)} text prompts")
+        logger.info(f"[OpenYOLO3D Interface] Depth scale: {depth_scale}")
 
         prediction = self.model.predict(
             path_2_scene_data=scene_path,
@@ -53,6 +60,27 @@ class OpenYolo3DInterface:
         # Extract the first (and only) scene result
         scene_name = list(prediction.keys())[0]
         masks, classes, scores = prediction[scene_name]
+        
+        logger.info(f"[OpenYOLO3D Interface] Prediction complete for scene: {scene_name}")
+        logger.info(f"[OpenYOLO3D Interface]   → Masks shape: {masks.shape}")
+        logger.info(f"[OpenYOLO3D Interface]   → Classes shape: {classes.shape}, unique: {classes.unique().tolist() if len(classes) > 0 else []}")
+        
+        # Handle empty results gracefully
+        if len(scores) > 0:
+            logger.info(f"[OpenYOLO3D Interface]   → Scores shape: {scores.shape}, range: [{scores.min():.4f}, {scores.max():.4f}]")
+            logger.info(f"[OpenYOLO3D Interface]   → Total instances: {len(scores)}")
+            
+            # Log score distribution
+            high_conf = (scores > 0.5).sum().item()
+            med_conf = ((scores > 0.1) & (scores <= 0.5)).sum().item()
+            low_conf = (scores <= 0.1).sum().item()
+            logger.info(f"[OpenYOLO3D Interface]   → Score distribution: >0.5: {high_conf}, 0.1-0.5: {med_conf}, <0.1: {low_conf}")
+        else:
+            logger.warning(f"[OpenYOLO3D Interface]   → NO INSTANCES DETECTED! Scores shape: {scores.shape}")
+            logger.warning(f"[OpenYOLO3D Interface]   → This likely means either:")
+            logger.warning(f"[OpenYOLO3D Interface]        1. No 3D mask proposals were generated (Mask3D step failed)")
+            logger.warning(f"[OpenYOLO3D Interface]        2. No 2D bounding boxes were detected (YOLO-World step failed)")
+            logger.warning(f"[OpenYOLO3D Interface]        3. The 3D-2D matching process filtered out all instances")
         
         return {
             'masks': masks,

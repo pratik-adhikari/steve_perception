@@ -11,6 +11,9 @@ inference:
   # Confidence threshold for detections
   conf_threshold: 0.1
   
+  # Depth scale for OpenYOLO3D (default 1000.0 for typical depth sensors)
+  depth_scale: 1000.0
+  
   # Batch size for projection (OpenYOLO3D only)
   batch_size: 200000
 

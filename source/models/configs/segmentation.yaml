@@ -6,7 +6,7 @@ model:
 
 inference:
   # Frame sampling (higher = less memory, faster, but less accurate)
-  frame_step: 10
+  frame_step: 2
   
   # Confidence threshold for detections
   conf_threshold: 0.1
