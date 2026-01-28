@@ -135,7 +135,10 @@ class SceneGraph:
                         min_dist = dist
                         min_index = other.object_id
             node.belongs_to = min_index
-            node.add_box(self.nodes[node.belongs_to].centroid)
+            if node.belongs_to is not None:
+                node.add_box(self.nodes[node.belongs_to].centroid)
+            else:
+                print(f"[Warning] Drawer {node.object_id} could not be associated with any shelf/furniture.")
         # add the regular node based on the closest other node
         elif isinstance(node, ObjectNode) and node.movable:
             for other in self.nodes.values():
@@ -256,6 +259,9 @@ class SceneGraph:
         remove = []
         for node in self.nodes.values():
             if isinstance(node, DrawerNode):
+                if node.object_id not in self.outgoing:
+                    remove.append(node.object_id)
+                    continue
                 other = self.outgoing[node.object_id]
                 min_bb = np.min(self.nodes[other].points, axis=0)
                 max_bb = np.max(self.nodes[other].points, axis=0)
