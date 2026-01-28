@@ -7,7 +7,7 @@ package_name = 'steve_perception'
 setup(
     # Package metadata
     name=package_name,
-    version='0.0.0',
+    version='1.0.0',
     packages=find_packages(exclude=['test']),
     # Install data files for ROS 2
     data_files=[

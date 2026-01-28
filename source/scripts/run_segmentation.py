@@ -92,7 +92,7 @@ Examples:
         config_dict.setdefault('inference', {})['conf_threshold'] = args.conf_threshold
     
     # Validate configuration with Pydantic
-    from models.config_models import load_and_validate_config
+    from models.adapters.config_models import load_and_validate_config
     try:
         validated_config = load_and_validate_config(config_dict)
         # Convert back to dict for compatibility with existing code
