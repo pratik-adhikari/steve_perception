@@ -45,6 +45,9 @@ Sending raw point clouds over UDP causes packet drops.
 - **Cause**: RTAB-Map waiting for robot movement.
 - **Fix**: Move the robot or set `Rtabmap/LinearUpdate` to 0.
 
+### Database Location
+Default database is saved to `data/rtabmap.db` within the package directory (relative to the launch file).
+
 ### TF Extrapolation Errors
 - **Cause**: Timestamp mismatch between sensor and TF.
 - **Fix**: Ensure consistent `use_sim_time` across all nodes.

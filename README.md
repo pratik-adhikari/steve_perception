@@ -39,24 +39,25 @@ pip3 install open3d scipy
 ### Step 1: Run Mapping
 Launch the sensor and RTAB-Map stack:
 ```bash
+# Run from package root (src/steve_perception)
 ros2 launch steve_perception mapping_pan_tilt.launch.py
 ```
-*Move your robot/camera to map the area. Closing the session saves `~/.ros/rtabmap.db` (default).*
+*Move your robot/camera to map the area. Closing the session saves `data/rtabmap.db` (auto-created in this folder).*
 
 ### Step 2: Export Data
 Convert the database into the standardized format for the AI pipeline:
 ```bash
-# Locate your rtabmap.db (usually in ~/.ros/ or specified in launch)
-python3 source/scripts/export_data.py ~/.ros/rtabmap.db --output_dir data/pipeline_output
+# Run from package root
+python3 source/scripts/export_data.py data/rtabmap.db --output_dir data/pipeline_output
 ```
-**Output:** You will see a `data/pipeline_output` folder containing `export/` (images, meshes) and `scene.ply`.
+**Output:** You will see a `data/pipeline_output` folder containing `export/` (images, meshes) and `cloud.ply` / `mesh.ply`.
 
 ---
 
-## 3. Phase B: AI Processing (The "Brain")
+## 3. Phase B: Perception understanding (brain)
 *Runs in a specialized GPU-accelerated Docker container.*
 
-### Step 1: Build the Brain
+### Step 1: Build the Brain by understanding features and whats in scene
 Build the Unified Perception image (contains OpenYOLO3D, Mask3D, CUDA deps):
 ```bash
 cd source/models/lib/OpenYOLO3D
@@ -68,6 +69,7 @@ cd ../../../..
 ### Step 2: Run Segmentation
 Run the full segmentation pipeline on your exported data:
 ```bash
+# Ensure you are in package root (src/steve_perception)
 docker run --rm --gpus all \
   -v $(pwd):/workspace \
   -w /workspace \

@@ -57,7 +57,13 @@ def _launch_setup(context, *args, **kwargs):
     # Database setup
     output_dir = str(rtab.get("output_dir", "")).strip()
     if not output_dir:
-        output_dir = os.path.join(os.path.expanduser("~"), ".ros", "steve_maps")
+        # Default: relative to this launch file (launch/../data)
+        # In symlink-install (dev), this maps to <workspace>/src/steve_perception/data
+        # In non-symlink (prod), this maps to <install>/share/steve_perception/data
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        output_dir = os.path.abspath(os.path.join(current_dir, "..", "data"))
+        print(f"[mapping_pan_tilt] Using relative data path: {output_dir}")
+             
     output_dir = os.path.expanduser(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
