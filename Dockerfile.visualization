@@ -1,0 +1,34 @@
+
+FROM python:3.10-slim
+
+# Install system dependencies for Open3D and headless rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    xauth \
+    libgl1 \
+    libgomp1 \
+    libx11-6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Install Python dependencies
+# open3d, numpy, scipy, pandas, matplotlib are needed for scene_graph.py and visualization
+RUN pip install --no-cache-dir \
+    open3d \
+    numpy \
+    scipy \
+    pandas \
+    matplotlib \
+    networkx \
+    plotly
+
+# Copy the source code
+# We mount the source code at runtime to avoid rebuilding for code changes, 
+# but we can copy it here for a standalone image if desired. 
+# For development/task execution, mounting is better, but Dockerfile needs to exist.
+
+ENV PYTHONPATH="/workspace/source"
+
+# Default command
+CMD ["bash"]

@@ -149,7 +149,15 @@ Examples:
         traceback.print_exc()
         return 1
     
-    # Optional visualization
+    # Generate Interactive HTML Visualization
+    try:
+        from utils_source.vis import visualize_scene_graph_interactive
+        html_path = os.path.join(args.output, "scene_graph_interactive.html")
+        visualize_scene_graph_interactive(scene_graph, html_path)
+    except Exception as e:
+        print(f"[WARNING] Interactive visualization failed: {e}")
+
+    # Optional visualization (GUI)
     if args.visualize:
         try:
             print(f"\n[SceneGraph] Launching visualization...")

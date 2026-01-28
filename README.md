@@ -86,12 +86,26 @@ docker run --rm --gpus all \
 - `--vocab`: `furniture` (default), `coco`, `lvis`, or `custom`.
   *(Note: 'furniture' vocab is strict. Use 'coco' for general objects)*
 
+### Step 3: Generate Scene Graph
+After segmentation, generate the scene graph (nodes and relationships):
+```bash
+docker run --rm --gpus all \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e PYTHONPATH="/workspace/source" \
+  steve_perception:unified \
+  python3 source/scripts/build_scene_graph.py \
+  --input data/pipeline_output/openyolo3d_output \
+  --output data/pipeline_output/generated_graph
+```
+
 ---
 
 ## 4. Visualization
 
 View the results from your host machine:
 
+### Meshes & Objects
 ```bash
 # View the labeled 3D mesh
 python3 source/scripts/visualize_mesh_labels.py data/pipeline_output/openyolo3d_output
@@ -99,6 +113,19 @@ python3 source/scripts/visualize_mesh_labels.py data/pipeline_output/openyolo3d_
 # Browse individual object point clouds
 python3 source/scripts/visualize_objects.py data/pipeline_output/openyolo3d_output/objects
 ```
+
+### Scene Graph
+The scene graph generation script automatically produces an interactive HTML visualization:
+- **File**: `data/pipeline_output/generated_graph/scene_graph_interactive.html`
+- **Usage**: Open this file in any web browser to rotate, zoom, and inspect nodes.
+
+To regenerate the graph and visualization:
+```bash
+python3 source/scripts/build_scene_graph.py \
+  --input data/pipeline_output/openyolo3d_output \
+  --output data/pipeline_output/generated_graph
+```
+*(Use `--visualize` flag for Open3D GUI window if available)*
 
 ---
 
