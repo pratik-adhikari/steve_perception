@@ -12,20 +12,34 @@ logger = logging.getLogger(__name__)
 
 
 def sample_from_mesh(mesh_path: Path, num_samples: int = 1_000_000) -> o3d.geometry.PointCloud:
-    """Sample dense points from mesh surface."""
+    """Sample dense points from mesh surface or load point cloud directly."""
+    # Attempt to load as mesh first
     mesh = o3d.io.read_triangle_mesh(str(mesh_path), enable_post_processing=True)
     
-    # Clean mesh
-    v_before = len(mesh.vertices)
-    mesh = mesh.remove_duplicated_vertices()
-    mesh = mesh.remove_unreferenced_vertices()
-    logger.info(f"Cleaned mesh: {v_before} → {len(mesh.vertices)} vertices")
+    # Check if it's a valid mesh with triangles
+    if len(mesh.triangles) > 0:
+        v_before = len(mesh.vertices)
+        mesh = mesh.remove_duplicated_vertices()
+        mesh = mesh.remove_unreferenced_vertices()
+        logger.info(f"Cleaned mesh: {v_before} → {len(mesh.vertices)} vertices")
+        
+        if not mesh.has_triangles(): # Check again after cleaning? Unlikely to lose all.
+             logger.warning("Mesh cleaning yielded 0 triangles. Treating as PointCloud.")
+        else:
+             pcd = mesh.sample_points_uniformly(number_of_points=num_samples)
+             logger.info(f"Sampled {len(pcd.points):,} points from mesh")
+             return pcd
     
-    if not mesh.has_triangles():
-        raise RuntimeError("Mesh has no faces")
-    
-    pcd = mesh.sample_points_uniformly(number_of_points=num_samples)
-    logger.info(f"Sampled {len(pcd.points):,} points")
+    # Fallback: Load as PointCloud (e.g. if rtabmap exported a cloud directly)
+    logger.info("Input appears to be a PointCloud (no triangles). Loading directly...")
+    pcd = o3d.io.read_point_cloud(str(mesh_path))
+    pcd = pcd.remove_duplicated_points()
+    # If it's a cloud, we might want to upsample/downsample? 
+    # Usually we rely on downsample step later.
+    if len(pcd.points) == 0:
+        raise RuntimeError(f"Could not load valid Mesh or PointCloud from {mesh_path}")
+        
+    logger.info(f"Loaded {len(pcd.points):,} points directly")
     return pcd
 
 

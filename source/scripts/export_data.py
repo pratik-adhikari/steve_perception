@@ -9,6 +9,7 @@ import numpy as np
 import yaml
 import datetime
 import logging
+import open3d as o3d # Required for mesh processing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -84,8 +85,20 @@ def export_rtabmap_data(logger, raw_dir, input_db):
     """Export images, poses, and mesh from RTAB-Map database."""
     run_cmd(logger, ["rtabmap-export", "--output_dir", str(raw_dir), "--images", "--poses", "--poses_format", "10", str(input_db)], 
             "Extracting images and poses...")
+            
+    # Pass 1: Textured Mesh (for visualization)
+    # This creates mesh.obj + textures in raw_dir
     run_cmd(logger, ["rtabmap-export", "--output_dir", str(raw_dir), "--texture", str(input_db)], 
-            "Extracting mesh...")
+            "Extracting textured mesh for visualization...")
+
+    # Pass 2: Vertex-Colored Mesh/Cloud (for processing)
+    # We export to a subdir to avoid overwriting the textured mesh
+    # Without --texture flag, rtabmap-export usually produces a PLY with vertex colors
+    proc_dir = raw_dir / "processing"
+    proc_dir.mkdir(exist_ok=True)
+    run_cmd(logger, ["rtabmap-export", "--output_dir", str(proc_dir), str(input_db)], 
+            "Extracting colored geometry for processing...")
+
 
 
 def organize_frames(logger, raw_dir, export_dir):
@@ -157,8 +170,18 @@ def organize_frames(logger, raw_dir, export_dir):
 
 def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
     """Process mesh and point cloud from raw export."""
+    # Find textured mesh (Pass 1) in root of raw_dir
     mesh_candidates = list(raw_dir.glob("*.obj")) + list(raw_dir.glob("*.ply"))
     mesh_file = next((f for f in mesh_candidates if f.suffix == '.obj'), mesh_candidates[0] if mesh_candidates else None)
+    
+    # Find colored mesh (Pass 2) in processing/
+    proc_dir = raw_dir / "processing"
+    cloud_candidates = []
+    if proc_dir.exists():
+        cloud_candidates = list(proc_dir.glob("*.ply")) + list(proc_dir.glob("*.obj"))
+    
+    # Prefer colored mesh for cloud generation, fallback to textured mesh
+    cloud_source = cloud_candidates[0] if cloud_candidates else mesh_file
     
     export_stats = {'mesh_found': False, 'mesh_vertices': 0, 'mesh_triangles': 0, 'point_cloud_points': 0}
     
@@ -166,17 +189,22 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
         logger.warning("No mesh found")
         return export_stats
     
-    logger.info(f"Found {mesh_file.name}")
+    logger.info(f"Found visual mesh: {mesh_file.name}")
+    if cloud_source != mesh_file:
+        logger.info(f"Found colored source for cloud: {cloud_source.name}")
+        
     export_stats['mesh_found'] = True
     
     try:
+        # Load the VISUAL mesh for stats and saving mesh_raw.ply (geometry)
         mesh = mesh_processor.load_mesh(mesh_file)
         mesh = mesh_processor.clean_mesh(mesh)
         export_stats['mesh_vertices'] = len(mesh.vertices)
         export_stats['mesh_triangles'] = len(mesh.triangles)
-        # Save raw mesh with a name that won't be picked up by OpenYOLO3D as the primary scene
-        mesh_processor.save_mesh_ply(mesh, export_dir / "mesh_raw.ply")
-        logger.info(f"Saved mesh: {len(mesh.vertices):,} vertices")
+        # Save raw mesh to processing directory to avoid confusing OpenYOLO3D
+        # (It globs *.ply in export_dir and might pick this uncolored mesh)
+        mesh_processor.save_mesh_ply(mesh, raw_dir / "processing" / "mesh_geometry.ply")
+        logger.info(f"Saved geometry mesh to processing dir: {len(mesh.vertices):,} vertices")
     except Exception as e:
         logger.error(f"Mesh processing failed: {e}")
     
@@ -188,15 +216,44 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
         logger.warning(f"Texture copy failed: {e}")
     
     logger.info("Creating point cloud...")
-    # OpenYOLO3D and others expect a colored point cloud, often named scene.ply in ScanNet
-    pcd_output = export_dir / "scene.ply"
-    if point_cloud_generator.create_point_cloud_pipeline(mesh_file, pcd_output, max_points, voxel_size):
+    # OpenYOLO3D expects scene.ply
+    scene_ply = export_dir / "scene.ply"
+    cloud_ply = export_dir / "cloud.ply"
+    
+    # Use cloud_source (which presumably has vertex colors from Pass 2)
+    if point_cloud_generator.create_point_cloud_pipeline(cloud_source, scene_ply, max_points, voxel_size):
         import open3d as o3d
-        pcd = o3d.io.read_point_cloud(str(pcd_output))
+        pcd = o3d.io.read_point_cloud(str(scene_ply))
         export_stats['point_cloud_points'] = len(pcd.points)
         logger.info(f"Saved point cloud: {len(pcd.points):,} points")
+        
+        # Create user-requested cloud.ply copy
+        shutil.copy2(scene_ply, cloud_ply)
+        logger.info(f"Saved copy as: {cloud_ply.name}")
     else:
         logger.error("Point cloud creation failed")
+    
+    # User requested specific naming convention for visualization
+    try:
+        vis_dir = export_dir / "visualization"
+        vis_dir.mkdir(exist_ok=True)
+        
+        # 1. Save textured/raw mesh as raw_mesh.ply
+        # This comes from the first pass (mesh_file) which has UV maps/textures
+        raw_mesh_ply = vis_dir / "raw_mesh.ply"
+        mesh_textured = o3d.io.read_triangle_mesh(str(mesh_file), enable_post_processing=True)
+        o3d.io.write_triangle_mesh(str(raw_mesh_ply), mesh_textured)
+        logger.info(f"Saved raw/textured mesh to {raw_mesh_ply.name}")
+        
+        # 2. Save colored mesh as mesh.ply
+        # This comes from the second pass (cloud_source) which has vertex colors
+        final_mesh_ply = vis_dir / "mesh.ply"
+        colored_mesh = o3d.io.read_triangle_mesh(str(cloud_source), enable_post_processing=True)
+        o3d.io.write_triangle_mesh(str(final_mesh_ply), colored_mesh)
+        logger.info(f"Saved colored mesh to {final_mesh_ply.name}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to save visualization meshes: {e}")
     
     return export_stats
 
@@ -224,8 +281,8 @@ def main():
     parser = argparse.ArgumentParser(description="Export Data from RTAB-Map DB")
     parser.add_argument("input_db", help="Path to rtabmap.db")
     parser.add_argument("--output_dir", default="data/pipeline_output", help="Output directory")
-    parser.add_argument("--max_points", type=int, default=1_000_000, help="Max points to sample from mesh")
-    parser.add_argument("--voxel_size", type=float, default=0.01, help="Voxel size (m) for downsampling")
+    parser.add_argument("--max_points", type=int, default=500_000, help="Max points to sample from mesh")
+    parser.add_argument("--voxel_size", type=float, default=0.05, help="Voxel size (m) for downsampling (Default: 0.05m to prevent OOM)")
     parser.add_argument("--keep_temp", action="store_true", help="Keep raw export folder for debugging")
     
     args = parser.parse_args()

@@ -44,6 +44,113 @@ class OutputManager:
             
         if self.config['output'].get('save_detailed_objects', True):
             self._save_detailed_objects(result, vocabulary)
+            
+        # Always save visualization if requested
+        if self.config['output'].get('save_visualization', True):
+            self._save_colored_visualization(result)
+
+    def _save_colored_visualization(self, result: SegmentationResult):
+        """Save a colored visualization (mesh or point cloud) of the segmentation."""
+        import open3d as o3d
+        import matplotlib.pyplot as plt
+        try:
+            from scipy.spatial import cKDTree
+        except ImportError:
+            cKDTree = None
+            self.logger.warning("scipy not found, fallback to slow point cloud visualization")
+        
+        output_path = os.path.join(self.output_dir, "mesh_labeled.ply")
+        
+        # 1. Determine High-Quality Mesh Path
+        # Expecting: output_dir=.../openyolo3d_output -> parent -> export/visualization/raw_mesh.ply
+        # We use raw_mesh.ply because it is guaranteed to have geometry (faces), whereas mesh.ply might be a dense cloud
+        parent_dir = os.path.dirname(self.output_dir.rstrip('/'))
+        mesh_path = os.path.join(parent_dir, "export", "visualization", "raw_mesh.ply")
+        
+        has_mesh = os.path.exists(mesh_path)
+        if has_mesh:
+            self.logger.info(f"Found high-quality mesh: {mesh_path}")
+        else:
+            self.logger.warning(f"High-quality mesh not found at {mesh_path}, falling back to point cloud")
+            
+        # 2. Prepare Colors for Segmentation Points
+        if result.points is None:
+            return
+
+        # Default to white for unsegmented/background
+        point_colors = np.ones((len(result.points), 3)) 
+        
+        # Mark unsegmented points with a sentinel if we want strict white background 
+        # (Already initialized to white (1,1,1))
+        
+        # Get colormap
+        cmap = plt.get_cmap("tab20")
+        
+        # Overlay masks
+        # Sort by score so high confidence overwrites low confidence
+        sorted_indices = np.argsort(result.scores)
+        conf_thresh = self.config['inference'].get('conf_threshold', 0.1)
+        
+        # Keep track of which points are actually segmented
+        segmented_mask = np.zeros(len(result.points), dtype=bool)
+        
+        for idx in sorted_indices:
+            if result.scores[idx] < conf_thresh:
+                continue
+                
+            mask = result.masks[:, idx].astype(bool)
+            color = cmap(idx % 20)[:3]
+            point_colors[mask] = color
+            segmented_mask[mask] = True
+            
+        # 3. Transfer to Mesh (if available) or Save Point Cloud
+        if has_mesh and cKDTree is not None:
+            try:
+                mesh = o3d.io.read_triangle_mesh(mesh_path)
+                vertices = np.asarray(mesh.vertices)
+                
+                self.logger.info(f"Building KDTree for {len(result.points)} points...")
+                tree = cKDTree(result.points)
+                
+                self.logger.info(f"Querying nearest neighbors for {len(vertices)} vertices...")
+                # Query nearest neighbor for all vertices
+                dists, indices = tree.query(vertices, k=1, workers=-1)
+                
+                # Transfer colors
+                # Initialize mesh colors to White
+                mesh_colors = np.ones((len(vertices), 3))
+                
+                # Check distance threshold? 
+                # If the mesh vertex is too far from any point, keep it white.
+                # Assuming typical voxel sizes, 0.1m is a safe upper bound for "too far".
+                valid_mask = dists < 0.1 
+                
+                # Only transfer color if the nearest neighbor was actually segmented
+                # indices gives us the index in result.points
+                neighbor_segmented = segmented_mask[indices]
+                
+                # Combine: Valid neighbor AND neighbor is segmented
+                transfer_mask = valid_mask & neighbor_segmented
+                
+                # Apply colors where applicable
+                mesh_colors[transfer_mask] = point_colors[indices[transfer_mask]]
+                
+                mesh.vertex_colors = o3d.utility.Vector3dVector(mesh_colors)
+                o3d.io.write_triangle_mesh(output_path, mesh)
+                self.logger.info(f"Saved high-quality labeled mesh to {output_path}")
+                return
+                
+            except Exception as e:
+                self.logger.error(f"Failed to process high-quality mesh: {e}")
+                self.logger.info("Falling back to point cloud dump")
+        
+        # Fallback: Save the labeled point cloud directly
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(result.points)
+        pcd.colors = o3d.utility.Vector3dVector(point_colors)
+        
+        o3d.io.write_point_cloud(output_path, pcd)
+        self.logger.info(f"Saved colored visualization (point cloud) to {output_path}")
     
     def _save_label_mapping(self, vocabulary: List[str]):
         """Save vocabulary to CSV for SceneGraph builder."""

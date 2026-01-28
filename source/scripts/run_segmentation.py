@@ -6,6 +6,14 @@ Single entry point for all segmentation models.
 import argparse
 import sys
 import os
+import logging
+import torch
+# Workaround for RTX 4080 (Ada) running generic CUDA 11.3 container
+torch.backends.cudnn.benchmark = False
+# If Internal Error persists, uncomment the next line, but it will be slow
+# torch.backends.cudnn.enabled = False 
+
+from pathlib import Path
 
 # CRITICAL: Ensure source directory is in python path BEFORE any local imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
