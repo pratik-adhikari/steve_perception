@@ -35,7 +35,7 @@ class Config:
                 raise AssertionError("Attempting to build recursive configuration.")
 
             # load the .yaml file as a dict
-            config_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            config_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             config_path = os.path.join(config_path, "configs", config)
             with open(config_path, "r", encoding="UTF-8") as file_handle:
                 cfg = yaml.safe_load(file_handle)

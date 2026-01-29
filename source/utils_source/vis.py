@@ -112,18 +112,33 @@ def draw_boxes(image: np.ndarray, detections: list[Detection]) -> None:
     cv2.destroyAllWindows() 
 
 
-def get_bbox_lines(centroid, dimensions):
+def get_bbox_lines(centroid, dimensions, pose=None):
     """
-    Generate lines for a 3D bounding box given centroid and dimensions.
+    Generate lines for a 3D bounding box given centroid, dimensions, and optional pose.
     Returns x, y, z lists for 3D plotting including None for line breaks.
     """
-    cx, cy, cz = centroid
+    # Dimensions in Open3D OBB are usually full extents.
+    # Local corners centered at 0
     dx, dy, dz = dimensions[0]/2, dimensions[1]/2, dimensions[2]/2
     
-    corners = np.array([
-        [cx-dx, cy-dy, cz-dz], [cx+dx, cy-dy, cz-dz], [cx+dx, cy+dy, cz-dz], [cx-dx, cy+dy, cz-dz], # Bottom 0-3
-        [cx-dx, cy-dy, cz+dz], [cx+dx, cy-dy, cz+dz], [cx+dx, cy+dy, cz+dz], [cx-dx, cy+dy, cz+dz]  # Top 4-7
+    local_corners = np.array([
+        [-dx, -dy, -dz], [dx, -dy, -dz], [dx, dy, -dz], [-dx, dy, -dz], # Bottom 0-3
+        [-dx, -dy, dz], [dx, -dy, dz], [dx, dy, dz], [-dx, dy, dz]      # Top 4-7
     ])
+    
+    # Rotate if pose is provided
+    # Pose is 4x4 matrix. Rotation is 3x3 top-left.
+    if pose is not None:
+        rotation = pose[:3, :3]
+        # Although centroid is usually pose[:3, 3], we use the provided centroid argument 
+        # which comes from node.centroid, to be consistent with point cloud mean.
+        # But OBB center might differ from Point Cloud centroid slightly. 
+        # Usually OBB is created from points.
+        # Let's rotate corners and add to centroid.
+        rotated_corners = np.dot(local_corners, rotation.T)
+        corners = rotated_corners + centroid
+    else:
+        corners = local_corners + centroid
     
     # 12 edges
     lines = [
@@ -157,7 +172,7 @@ def visualize_scene_graph_interactive(scene_graph, output_path: str):
     fig = go.Figure()
     pos = {}
 
-    def add_object_trace(oid, label, centroid, dims, color, symbol='circle'):
+    def add_object_trace(oid, label, centroid, dims, color, symbol='circle', pose=None):
         pos[oid] = centroid
         
         # Centroid
@@ -175,7 +190,7 @@ def visualize_scene_graph_interactive(scene_graph, output_path: str):
         if dims is not None:
              # handle dimensions usually being (l, w, h) or similar
              # Ensure dims is numpy array or list
-             bx, by, bz = get_bbox_lines(centroid, dims)
+             bx, by, bz = get_bbox_lines(centroid, dims, pose)
              fig.add_trace(go.Scatter3d(
                 x=bx, y=by, z=bz,
                 mode='lines',
@@ -188,25 +203,30 @@ def visualize_scene_graph_interactive(scene_graph, output_path: str):
     for node in scene_graph.nodes.values():
         label = scene_graph.label_mapping.get(node.sem_label, "ID not found")
         
+        # Get color (0-1 float or 0-255 int depending on source)
+        # Using rgb string for plotly
+        c = node.color
+        if np.max(c) <= 1.0:
+            color_str = f'rgb({int(c[0]*255)},{int(c[1]*255)},{int(c[2]*255)})'
+        else:
+            color_str = f'rgb({int(c[0])},{int(c[1])},{int(c[2])})'
+
+        # Helper to get pose safely
+        pose = getattr(node, 'bbox_pose', getattr(node, 'pose', None))
+        # If node has 'bb' (oriented bbox), we might want its center/rotation.
+        # node.dimensions usually comes from get_dimensions() which sets self.bb = obb
+        # and self.dimensions = obb.extent.
+        # But obb has its own center/rotation.
+        # If we use node.centroid and node.pose, it should align if node.pose is the object pose.
+        # For DrawerNode, check constraints.
+        
         # Determine format/color
         if isinstance(node, DrawerNode):
-             # Drawers use dimensions from themselves and parent for width sometimes, 
-             # but node.dimensions should be populated if properly initialized or we use fallback
-             # In scene_graph.py save_drawers_to_json constructs dimensions: 
-             # [node.dimensions[0], self.nodes[node.belongs_to].dimensions[1], node.dimensions[2]]
-             # We try to use node.dimensions directly here, if it is 3D.
-             dims = node.dimensions
-             if hasattr(node, 'belongs_to') and node.belongs_to is not None:
-                 # Replicate save logic if needed, but let's assume node.dimensions is sufficient or we access parent
-                 pass 
-             add_object_trace(node.object_id, label, node.centroid, dims, 'blue', 'diamond')
-        elif not node.movable:
-             # Furniture
-             add_object_trace(node.object_id, label, node.centroid, node.dimensions, 'green', 'square')
+             # Drawers
+             add_object_trace(node.object_id, label, node.centroid, node.dimensions, color_str, 'diamond', pose=pose)
         else:
-             # Movable Object
-             # Use pose if needed? Centroid is fine.
-             add_object_trace(node.object_id, label, node.centroid, getattr(node, 'dimensions', [0.1, 0.1, 0.1]), 'red', 'circle')
+             # Movable or Furniture
+             add_object_trace(node.object_id, label, node.centroid, getattr(node, 'dimensions', None), color_str, 'circle', pose=pose)
 
     # Connections
     cx, cy, cz = [], [], []

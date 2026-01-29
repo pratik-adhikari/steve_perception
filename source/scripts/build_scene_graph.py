@@ -37,9 +37,11 @@ def load_label_mapping(scan_dir: str) -> dict:
         label_map = pd.read_csv(csv_path, usecols=['id', 'category'])
         return pd.Series(label_map['category'].values, index=label_map['id']).to_dict()
     else:
-        print(f"[SceneGraph] Using default ScanNet200 label mapping")
-        # Create mapping from VALID_CLASS_IDS_200 to CLASS_LABELS_200
-        return dict(zip(VALID_CLASS_IDS_200, CLASS_LABELS_200))
+        return None
+
+def get_default_label_mapping() -> dict:
+    print(f"[SceneGraph] Using default ScanNet200 label mapping")
+    return dict(zip(VALID_CLASS_IDS_200, CLASS_LABELS_200))
 
 
 def main():
@@ -69,6 +71,8 @@ Examples:
     args = parser.parse_args()
     
     # Validate input directory
+    # User provides the main output folder (e.g. data/pipeline_output/openyolo3d_output)
+    # We expect 'mask3d_output' to be inside it.
     mask3d_dir = os.path.join(args.input, 'mask3d_output')
     predictions_file = os.path.join(mask3d_dir, 'predictions.txt')
     
@@ -82,6 +86,10 @@ Examples:
     
     # Load label mapping
     label_mapping = load_label_mapping(args.input)
+    
+    if not label_mapping:
+        print("[ERROR] Label mapping not found/loaded.")
+        return 1
     
     # Define immovable objects (furniture)
     if not args.immovable:
@@ -114,7 +122,7 @@ Examples:
         return 1
     
     # Apply color palette
-    scene_graph.color_with_ibm_palette()
+    # scene_graph.color_with_ibm_palette()
     
     # Save outputs
     try:

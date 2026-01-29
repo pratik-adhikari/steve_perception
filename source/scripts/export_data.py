@@ -13,7 +13,7 @@ import open3d as o3d # Required for mesh processing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils_source.export_utils import point_cloud_generator, mesh_processor, calibration_utils
+from utils_source.export_utils import point_cloud_generator, mesh_processor, calibration_utils, mesh_reconstruction
 
 
 def setup_logger(output_dir):
@@ -227,9 +227,6 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
         export_stats['point_cloud_points'] = len(pcd.points)
         logger.info(f"Saved point cloud: {len(pcd.points):,} points")
         
-        # Create user-requested cloud.ply copy
-        shutil.copy2(scene_ply, cloud_ply)
-        logger.info(f"Saved copy as: {cloud_ply.name}")
     else:
         logger.error("Point cloud creation failed")
     
@@ -238,22 +235,18 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
         vis_dir = export_dir / "visualization"
         vis_dir.mkdir(exist_ok=True)
         
-        # 1. Save textured/raw mesh as raw_mesh.ply
-        # This comes from the first pass (mesh_file) which has UV maps/textures
-        raw_mesh_ply = vis_dir / "raw_mesh.ply"
-        mesh_textured = o3d.io.read_triangle_mesh(str(mesh_file), enable_post_processing=True)
-        o3d.io.write_triangle_mesh(str(raw_mesh_ply), mesh_textured)
-        logger.info(f"Saved raw/textured mesh to {raw_mesh_ply.name}")
-        
-        # 2. Save colored mesh as mesh.ply
-        # This comes from the second pass (cloud_source) which has vertex colors
+        # 2. Save colored mesh as mesh.ply using Poisson Reconstruction
+        # This guarantees a watertight surface with colors transferred from the point cloud.
         final_mesh_ply = vis_dir / "mesh.ply"
-        colored_mesh = o3d.io.read_triangle_mesh(str(cloud_source), enable_post_processing=True)
-        o3d.io.write_triangle_mesh(str(final_mesh_ply), colored_mesh)
-        logger.info(f"Saved colored mesh to {final_mesh_ply.name}")
+        logger.info("Generating high-quality mesh using Poisson Reconstruction (this may take a minute)...")
+        
+        # Use scene.ply (high density, colored cloud) as input
+        mesh_reconstruction.reconstruct_mesh(str(scene_ply), str(final_mesh_ply), depth=9)
+        
+        logger.info(f"Saved reconstructed mesh to {final_mesh_ply.name}")
         
     except Exception as e:
-        logger.warning(f"Failed to save visualization meshes: {e}")
+        logger.warning(f"Failed to generate visualization mesh (Poisson): {e}")
     
     return export_stats
 
@@ -281,8 +274,8 @@ def main():
     parser = argparse.ArgumentParser(description="Export Data from RTAB-Map DB")
     parser.add_argument("input_db", help="Path to rtabmap.db")
     parser.add_argument("--output_dir", default="data/pipeline_output", help="Output directory")
-    parser.add_argument("--max_points", type=int, default=500_000, help="Max points to sample from mesh")
-    parser.add_argument("--voxel_size", type=float, default=0.05, help="Voxel size (m) for downsampling (Default: 0.05m to prevent OOM)")
+    parser.add_argument("--max_points", type=int, default=50_000_000, help="Max points to sample from mesh")
+    parser.add_argument("--voxel_size", type=float, default=0.001, help="Voxel size (m) for downsampling (Default: 0.001m for high res)")
     parser.add_argument("--keep_temp", action="store_true", help="Keep raw export folder for debugging")
     
     args = parser.parse_args()

@@ -252,7 +252,7 @@ class SceneGraph:
         else:
             print("[SceneGraph] Warning: No nodes detected. KDTree not built.")
             self.tree = None
-        self.color_with_ibm_palette()
+        # self.color_with_ibm_palette()
         self.check_drawers_inside_shelf()
         
     def check_drawers_inside_shelf(self):
