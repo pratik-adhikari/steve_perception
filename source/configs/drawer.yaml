@@ -1,0 +1,8 @@
+# configuration file for drawer detection runner
+extends: "config.yaml"
+
+drawer_model:
+  conf_threshold: 0.9
+  vis_threshold: 0.5
+  iou_threshold: 0.5
+  input_format: "rgb"
