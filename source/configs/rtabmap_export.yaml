@@ -1,0 +1,29 @@
+# RTAB-Map Export Configuration
+# Used by source/scripts/export_data.py
+
+rtabmap_export:
+  # Primary Output Settings
+  # This voxel size determines the resolution of 'scene.ply' which is used by YOLO and Mask3D.
+  # Smaller = Higher Resolution (more points), Larger = Faster / Less Memory.
+  # Recommended: 0.02 (2cm) for high quality, 0.05 (5cm) for speed/memory safety.
+  primary_voxel_size: 0.02
+  
+  # Max points to sample (Prevent massive files)
+  max_points: 50000000
+
+  # Axis Correction
+  # Transform from RTAB-Map (Optical: Z-Forward) to Pipeline (OpenGL: Z-Backward)
+  # Diag(1, -1, -1, 1): Keeps X (Right), Flips Y (Up), Flips Z (Backward)
+  apply_axis_flip: true
+
+  # Multi-Resolution Export
+  # If true, generates additional point clouds at various resolutions in 'clouds_multires/'
+  multi_res_enabled: true
+  
+  # Multi-Res Settings
+  multi_res_min: 0.005  # 5mm
+  multi_res_max: 0.05   # 5cm
+  multi_res_steps: 10   # Number of levels
+
+  # Debugging
+  keep_temp_files: false

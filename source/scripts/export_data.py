@@ -150,6 +150,22 @@ def organize_frames(logger, raw_dir, export_dir):
                 K_4x4 = first_intrinsic
         
         T_world_cam = poses[stamp] @ T_local
+        
+        # AXIS CORRECTION (Feb 2026 Checkpoint)
+        # The RTAB-Map export uses a coordinate system that mismatches the pipeline expectations (OpenGL style).
+        # We apply a permanent XYZ Central Inversion (diag(-1, -1, -1, 1)) here to fix:
+        # 1. Floor on Ceiling (Y-flip)
+        # 2. Backside in Front (Z-flip)
+        # 2. Backside in Front (Z-flip)
+        # 3. Mirror Image (X-flip) - NO! X should point Right in both. 
+        #    Optical: Right. OpenGL: Right.
+        #    So X should NOT be flipped. Flipping X makes det=-1 (Reflection).
+        T_flip = np.eye(4)
+        T_flip[0, 0] = 1  # Keep X (Right is Right)
+        T_flip[1, 1] = -1 # Flip Y (Down -> Up)
+        T_flip[2, 2] = -1 # Flip Z (Forward -> Backward)
+        T_world_cam = T_world_cam @ T_flip
+
         # Save pose: poses/0.txt
         calibration_utils.save_matrix(T_world_cam, export_dir / "poses" / f"{frame_idx}.txt")
         # Note: We do NOT save per-frame intrinsics anymore
@@ -168,7 +184,7 @@ def organize_frames(logger, raw_dir, export_dir):
     return count, stats
 
 
-def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
+def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size, multi_res=False):
     """Process mesh and point cloud from raw export."""
     # Find textured mesh (Pass 1) in root of raw_dir
     mesh_candidates = list(raw_dir.glob("*.obj")) + list(raw_dir.glob("*.ply"))
@@ -220,15 +236,36 @@ def process_mesh_and_pcd(logger, export_dir, raw_dir, max_points, voxel_size):
     scene_ply = export_dir / "scene.ply"
     cloud_ply = export_dir / "cloud.ply"
     
-    # Use cloud_source (which presumably has vertex colors from Pass 2)
+    # Standard Export (using args.voxel_size)
     if point_cloud_generator.create_point_cloud_pipeline(cloud_source, scene_ply, max_points, voxel_size):
         import open3d as o3d
         pcd = o3d.io.read_point_cloud(str(scene_ply))
         export_stats['point_cloud_points'] = len(pcd.points)
-        logger.info(f"Saved point cloud: {len(pcd.points):,} points")
+        logger.info(f"Saved point cloud: {len(pcd.points):,} points (voxel={voxel_size}m)")
         
     else:
         logger.error("Point cloud creation failed")
+        
+    # Multi-Resolution Export (Requested Feature)
+    if multi_res:
+        logger.info("\n=== Multi-Resolution Export ===")
+        resolutions = np.linspace(0.005, 0.05, 10) # 10 levels: 0.005, 0.010, ..., 0.050
+        
+        clouds_dir = export_dir / "clouds_multires"
+        clouds_dir.mkdir(exist_ok=True)
+        
+        for res in resolutions:
+            res_val = float(res)
+            fname = f"scene_v{res_val:.3f}.ply"
+            out_path = clouds_dir / fname
+            
+            logger.info(f"Generating {fname} (voxel={res_val:.3f})...")
+            # We use same cloud_source and max_points
+            if point_cloud_generator.create_point_cloud_pipeline(cloud_source, out_path, max_points, res_val):
+                 pass # Success logs inside generator usually, or we assume success
+            else:
+                 logger.warning(f"Failed to generate {fname}")
+        logger.info("=== End Multi-Res Export ===\n")
     
     # User requested specific naming convention for visualization
     try:
@@ -275,10 +312,47 @@ def main():
     parser.add_argument("input_db", help="Path to rtabmap.db")
     parser.add_argument("--output_dir", default="data/pipeline_output", help="Output directory")
     parser.add_argument("--max_points", type=int, default=50_000_000, help="Max points to sample from mesh")
-    parser.add_argument("--voxel_size", type=float, default=0.001, help="Voxel size (m) for downsampling (Default: 0.001m for high res)")
+    parser.add_argument("--voxel_size", type=float, default=0.02, help="Voxel size (m) for downsampling (Default: 0.02m for high res)")
+    parser.add_argument("--multi_res", action="store_true", help="Export point cloud at 10 resolution levels (0.005m to 0.05m)")
     parser.add_argument("--keep_temp", action="store_true", help="Keep raw export folder for debugging")
     
+    parser.add_argument("--config", default="source/configs/rtabmap_export.yaml", help="Path to export config")
+    
     args = parser.parse_args()
+    
+    # Load Config
+    config_path = Path(args.config)
+    config = {}
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            full_config = yaml.safe_load(f)
+            config = full_config.get('rtabmap_export', {})
+            print(f"[RTAB-Map Export] Loaded config from {config_path}")
+    else:
+        print(f"[RTAB-Map Export] Config {config_path} not found, using defaults.")
+
+    # Merge Config with Args (CLI overrides Config)
+    # 1. Base Defaults from Config (or script defaults)
+    final_voxel = config.get('primary_voxel_size', 0.02)
+    final_points = config.get('max_points', 50_000_000)
+    final_multi = config.get('multi_res_enabled', False)
+    final_keep = config.get('keep_temp_files', False)
+    
+    # 2. CLI Overrides (If explicit args provided)
+    if args.voxel_size != 0.02: 
+        final_voxel = args.voxel_size
+    
+    if args.multi_res: 
+        final_multi = True
+        
+    if args.max_points != 50_000_000:
+        final_points = args.max_points
+        
+    if args.keep_temp:
+        final_keep = True
+
+    final_max = final_points
+    
     input_db = Path(args.input_db).resolve()
     output_dir = Path(args.output_dir).resolve()
     
@@ -302,9 +376,10 @@ def main():
     frame_count, frame_stats = organize_frames(logger, dirs['raw'], dirs['export'])
     
     logger.info("Processing mesh and point cloud...")
-    mesh_stats = process_mesh_and_pcd(logger, dirs['export'], dirs['raw'], args.max_points, args.voxel_size)
+    print(f"Multi-Res: {final_multi}")
+    mesh_stats = process_mesh_and_pcd(logger, dirs['export'], dirs['raw'], final_max, final_voxel, final_multi)
     
-    if args.keep_temp:
+    if final_keep:
         rel_raw = get_relative_path(dirs['raw'], cwd)
         logger.info(f"Kept temp folder: {rel_raw}")
     else:
