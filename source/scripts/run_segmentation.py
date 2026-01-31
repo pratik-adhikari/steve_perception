@@ -203,6 +203,22 @@ Examples:
             
         return 0
     except Exception as e:
+        # Log captured output even on failure
+        stdout_content = stdout_buffer.getvalue()
+        stderr_content = stderr_buffer.getvalue()
+        
+        if stdout_content:
+            logger.info("="*60)
+            logger.info("Captured stdout (Partial/Failed):")
+            logger.info("="*60)
+            logger.info(stdout_content)
+            
+        if stderr_content:
+            logger.warning("="*60)
+            logger.warning("Captured stderr (Partial/Failed):")
+            logger.warning("="*60)
+            logger.warning(stderr_content)
+
         logger.error(f"Segmentation failed: {e}", exc_info=True)
         return 1
 

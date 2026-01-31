@@ -109,7 +109,9 @@ class OutputManager:
                 mesh = o3d.io.read_triangle_mesh(mesh_path)
                 vertices = np.asarray(mesh.vertices)
                 
-                self.logger.info(f"Building KDTree for {len(result.points)} points...")
+                if len(vertices) != len(result.points):
+                    self.logger.warning(f"Mesh vertex count ({len(vertices)}) mismatches result points ({len(result.points)}). Skipping high-quality mesh transfer.")
+                    raise ValueError("Point count mismatch")
                 tree = cKDTree(result.points)
                 
                 self.logger.info(f"Querying nearest neighbors for {len(vertices)} vertices...")

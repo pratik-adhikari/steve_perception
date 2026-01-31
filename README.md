@@ -42,7 +42,15 @@ Launch the sensor and RTAB-Map stack:
 # Run from package root (src/steve_perception)
 ros2 launch steve_perception mapping_pan_tilt.launch.py
 ```
-*Move your robot/camera to map the area. Closing the session saves `data/rtabmap.db` (auto-created in this folder).*
+*Move your robot/camera to map the area. Closing the session saves `data/rtabmap.db` (auto-created in this folder).
+For configuration, refer to:
+  - `config/rtabmap_*.ini`
+    - Internal RTAB-Map algorithm parameters.
+
+  - `source/configs/rtabmap_export.yaml`
+    - **Export Settings**: Control voxel size (e.g. 0.02 vs 0.05), enable Multi-Resolution output, and set max points.
+    - Used by `source/scripts/export_data.py`.
+*
 
 ### Step 2: Export Data
 Convert the database into the standardized format for the AI pipeline:
@@ -70,16 +78,7 @@ cd ../../../..
 Run the full segmentation pipeline on your exported data:
 ```bash
 # Ensure you are in package root (src/steve_perception)
-docker run --rm --gpus all \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  -e PYTHONPATH="/workspace/source" \
-  -e PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128" \
-  steve_perception:unified \
-  python3 source/scripts/run_segmentation.py \
-  --data data/pipeline_output \
-  --model openyolo3d \
-  --vocab furniture
+docker run --rm --gpus all -v $(pwd):/workspace -w /workspace -e PYTHONPATH="/workspace/source" -e PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128" steve_perception:unified python3 source/scripts/run_segmentation.py --data data/pipeline_output --model openyolo3d --vocab furniture
 ```
 
 **Arguments:**
@@ -99,33 +98,43 @@ docker run --rm --gpus all \
   --output data/pipeline_output/generated_graph
 ```
 
----
+## Usage
+**[📖 Click here for the full Pipeline Usage Guide](docs/PIPELINE_USAGE.md)**
 
-## 4. Visualization
+The pipeline consists of 4 modular steps:
 
-View the results from your host machine:
+1.  **Segmentation (Mask3D)**
+    ```bash
+    python3 source/scripts/run_segmentation.py --data data/pipeline_output --model mask3d --vocab furniture
+    ```
 
-### Meshes & Objects
+2.  **Detection & Fusion (YOLO-Drawer)**
+    ```bash
+    python3 source/scripts/run_yolodrawer.py --data data/pipeline_output
+    ```
+
+3.  **Combination**
+    ```bash
+    python3 source/scripts/combine_inferences.py --data data/pipeline_output --output combined_output
+    ```
+
+4.  **Graph Generation**
+    ```bash
+    python3 source/scripts/build_scene_graph.py --input data/pipeline_output/combined_output --output data/pipeline_output/generated_graph
+    ```
+
+For **debugging options** (visualizations) and **individual model analysis** (YOLO-only graphs), see the [Usage Guide](docs/PIPELINE_USAGE.md).
+
+## 4. Diagnostics & Verification
+If you suspect sensor drift or misalignment, use the included diagnostic tools:
+
+### Visualizing 3D Drift (Reprojection)
+Generate 3D-to-2D overlays to verify if the 3D position of objects stays consistent across frames:
 ```bash
-# View the labeled 3D mesh
-python3 source/scripts/visualize_mesh_labels.py data/pipeline_output/openyolo3d_output
-
-# Browse individual object point clouds
-python3 source/scripts/visualize_objects.py data/pipeline_output/openyolo3d_output/objects
+python3 source/scripts/diagnose_reprojection.py
 ```
-
-### Scene Graph
-The scene graph generation script automatically produces an interactive HTML visualization:
-- **File**: `data/pipeline_output/generated_graph/scene_graph_interactive.html`
-- **Usage**: Open this file in any web browser to rotate, zoom, and inspect nodes.
-
-To regenerate the graph and visualization:
-```bash
-python3 source/scripts/build_scene_graph.py \
-  --input data/pipeline_output/openyolo3d_output \
-  --output data/pipeline_output/generated_graph
-```
-*(Use `--visualize` flag for Open3D GUI window if available)*
+**Output**: `data/pipeline_output/generated_graph_yolo/debug_reprojections/`
+Check the yellow point clouds and "World Centroid" text. If the centroid shifts significantly for the same object, verify your `rtabmap.db` or re-export.
 
 ---
 

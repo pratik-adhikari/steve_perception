@@ -114,10 +114,11 @@ def preprocess_scan(scan_dir, drawer_detection=False):
     if drawer_detection and not os.path.exists(scan_dir + "/predictions_drawers.txt"):
         next_line = len(lines)
         
-        indices_drawers = register_drawers(scan_dir)
+        drawer_items = register_drawers(scan_dir)
         
         drawer_lines=[]
-        for indices_drawer in indices_drawers:
+        for item in drawer_items:
+            indices_drawer = item['indices']
             binary_mask = np.zeros(points.shape[0])
             binary_mask[indices_drawer] = 1
             np.savetxt(scan_dir + f"/pred_mask/{next_line:03}.txt", binary_mask, fmt='%d')
