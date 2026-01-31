@@ -3,6 +3,7 @@ import open3d.visualization.rendering as rendering
 import numpy as np
 import json, cv2
 import matplotlib.pyplot as plt
+import os
 
 def parse_json(file_path):
     with open(file_path, 'r') as file:
@@ -12,6 +13,47 @@ def parse_json(file_path):
     # projection_matrix = np.array(data["projectionMatrix"]).reshape(4, 4)
     camera_pose = np.array(data["cameraPoseARFrame"]).reshape(4, 4)
     return intrinsics, camera_pose
+
+def parse_txt_pose(file_path):
+    return np.loadtxt(file_path)
+
+def parse_intrinsics(file_path):
+    return np.loadtxt(file_path)[:3, :3]
+
+
+def load_metadata(image_path):
+    # Try legacy .json (adjacent to image or same name)
+    json_path = image_path + ".json"
+    if os.path.exists(json_path):
+         return parse_json(json_path)
+         
+    # Try Export Format
+    # image_path: .../export/color/0.jpg
+    # poses: .../export/poses/0.txt
+    # intrinsics: .../export/intrinsics.txt
+    
+    path_obj = os.path.normpath(image_path)
+    parts = path_obj.split(os.sep)
+    
+    # Check if inside "color" folder
+    if "color" in parts:
+        # assume .../export/color/xxx.jpg
+        # go up two levels to export root
+        img_dir = os.path.dirname(image_path) # .../color
+        export_dir = os.path.dirname(img_dir) # .../export
+        
+        stem = os.path.splitext(os.path.basename(image_path))[0]
+        
+        pose_path = os.path.join(export_dir, "poses", f"{stem}.txt")
+        int_path = os.path.join(export_dir, "intrinsics.txt")
+        
+        if os.path.exists(pose_path) and os.path.exists(int_path):
+            pose = parse_txt_pose(pose_path)
+            intrinsics = parse_intrinsics(int_path)
+            return intrinsics, pose
+
+    # Fallback/Failure
+    raise FileNotFoundError(f"Could not find metadata (json or poses/intrinsics) for {image_path}")
 
 def draw_box(image, box, width, color=(0, 255, 0), thickness=2):
     for i in range(4):
@@ -116,9 +158,15 @@ def project_points_bbox(points_3d, extrinsics, intrinsics, width, height, bbox, 
                 best_points[y, x] = point
                 best_cam_points[y, x] = cam_pt
     
+    if np.sum(depth_buffer != -np.inf) == 0:
+        print(f"[Project3D] Warning: No points found in frustum for bbox {bbox} (Img Size: {width}x{height}, Grid: {grid})")
+    
     # Filter valid points and their 2D projections
     valid = (depth_buffer != -np.inf)
     valid_points_3d = best_points[valid]
+    
+    # Debug Count
+    print(f"[Project3D] BBox {bbox} -> {valid_points_3d.shape[0]} points")
     valid_cam_points = best_cam_points[valid]
     y_indices, x_indices = np.where(valid)
     valid_image_points = np.vstack((x_indices*grid, y_indices*grid)).T
@@ -157,9 +205,15 @@ def project_points_bbox(points_3d, extrinsics, intrinsics, width, height, bbox, 
 
 def detections_to_bboxes(points, detections, threshold=0.5):
     bboxes_3d = []
-    for file, _, confidence, bbox in detections:
-        intrinsics, extrinsics = parse_json(file + ".json")
-        image = cv2.imread(file + ".jpg")
+    # detections is now list of (file, name, confidence, bbox, source_files_list)
+    for file, name, confidence, bbox, source_files_list in detections:
+        try:
+             intrinsics, extrinsics = load_metadata(file)
+        except Exception as e:
+             # print(e)
+             continue
+             
+        image = cv2.imread(file) # file is jpg path
         width, height = image.shape[1], image.shape[0]
 
         if confidence > threshold:
@@ -173,7 +227,21 @@ def detections_to_bboxes(points, detections, threshold=0.5):
             _, inliers = pcd_bbox.segment_plane(distance_threshold=0.01, ransac_n=3, num_iterations=1000)
             pcd_bbox = pcd_bbox.select_by_index(inliers) 
             bbox_3d = pcd_bbox.get_minimal_oriented_bounding_box()
-            bboxes_3d += [(bbox_3d, confidence)]
+            
+            # [Fix for 2D Square Boxes] Enforce minimum thickness (e.g. 5cm)
+            extent = bbox_3d.extent.copy()
+            min_thickness = 0.05
+            if extent[2] < min_thickness: # Usually Z is thickness for planar patches
+                 extent[2] = min_thickness
+                 bbox_3d.extent = extent
+            
+            # Use max/min check for general orientation independence
+            # If any dim is too small, pad it.
+            new_extent = np.maximum(bbox_3d.extent, [min_thickness, min_thickness, min_thickness])
+            bbox_3d.extent = new_extent
+            
+            # Return list of source source files
+            bboxes_3d += [(bbox_3d, confidence, name, source_files_list)]
 
        
     return bboxes_3d

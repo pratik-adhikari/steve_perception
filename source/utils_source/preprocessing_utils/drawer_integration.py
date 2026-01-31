@@ -188,49 +188,204 @@ def select_optimal_images(clusters):
             optimal_images.append(max(cluster, key=lambda x: x[1])[0])
     return optimal_images
 
-def register_drawers(dir_path):
+def register_drawers(dir_path, vis_block=False, debug_output_dir=None):
     """
     Registers drawers from a YOLO detection algorithm in the 3D scene.
 
     :param dir_path: Path to the directory containing drawer data for registration.
-    :return: List of sorted indices representing registered drawers.
+    :return: List of dicts representing registered drawers with metadata.
     """
     detections = []
-    if os.path.exists(os.path.join(dir_path, 'detections.pkl')):
+    # If cached detections exist, load them? 
+    # Warning: Cached detections might not have new format if pickle is old.
+    # For now, let's assume we want to re-run if we are debugging or just ignore cache for safety?
+    # Or try/except.
+    
+    # Actually, for this refactor, let's FORCE re-run to ensure we get visualization if requested.
+    # And to ensure we use the new logic.
+    force_rerun = True
+    
+    if not force_rerun and os.path.exists(os.path.join(dir_path, 'detections.pkl')):
         with open(os.path.join(dir_path, 'detections.pkl'), 'rb') as f:
             detections = pickle.load(f)
     else:
-        for image_name in sorted(glob.glob(os.path.join(dir_path, 'frame_*.jpg'))):
-            img_path = os.path.join(dir_path, image_name)
+        # Check for ScanNet format (color/*.jpg)
+        color_dir = os.path.join(dir_path, "color")
+        if os.path.exists(color_dir):
+            image_files = sorted(glob.glob(os.path.join(color_dir, "*.jpg")))
+            image_files.sort(key=lambda f: int(os.path.splitext(os.path.basename(f))[0]))
+        else:
+            # Fallback to legacy format
+            image_files = sorted(glob.glob(os.path.join(dir_path, 'frame_*.jpg')))
+            
+        for img_path in image_files:
+            image_name = os.path.basename(img_path)
             image = cv2.imread(img_path)
-            #image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            detections += [predict_yolodrawer(image, image_name[:-4], vis_block=False)]
-        with open(os.path.join(dir_path, 'detections.pkl'), 'wb') as f:
-            pickle.dump(detections, f)
+            # Pass debug_output_dir (vis_block logic handled inside)
+            # We enable vis_block if debug_output_dir is provided
+            do_vis = vis_block or (debug_output_dir is not None)
+            
+            # Pass FULL path as image_name so that downstream functions can resolve metadata
+            # predict_yolodrawer returns (list, count). 
+            res_tuple = predict_yolodrawer(image, img_path, vis_block=do_vis, debug_output_dir=debug_output_dir)
+            
+            # Append if detections exist (count > 0 or list not empty)
+            if res_tuple and len(res_tuple) == 2 and res_tuple[1] > 0:
+                detections.append(res_tuple)
+        
+        # Save cache if possible
+        try:
+             with open(os.path.join(dir_path, 'detections.pkl'), 'wb') as f:
+                pickle.dump(detections, f)
+        except Exception as e:
+            print(f"Warning: Could not save detections cache: {e}")
         
     clusters = cluster_images(detections)
     
-    optimal_images = select_optimal_images(clusters)
+    detections_flat = []
     
-    detections = [det for subdets in [detections[opt][0] for opt in optimal_images] for det in subdets]
+    # New Logic: Iterate clusters, check max confidence, collect all sources
+    final_clusters = []
     
-    pcd_original = o3d.io.read_point_cloud(os.path.join(dir_path, 'mesh_labeled.ply'))
-    bboxes_3d = detections_to_bboxes(np.asarray(pcd_original.points), detections)
+    # detections is list of lists: [[(det, det), count], [(det), count]] (Wait, predict_yolodrawer returns (list_of_detections, count))
+    # So detections[i] is ( [Det1, Det2], 5 )
+    
+    for cluster in clusters:
+        # cluster is list of (index, count)
+        # Gather all detections in this cluster
+        cluster_dets = []
+        cluster_indices = []
+        max_conf = 0.0
+        
+        for idx, count in cluster:
+             # detections[idx][0] is the list of Detection objects
+             dets_list = detections[idx][0]
+             for d in dets_list:
+                 if d.conf > max_conf:
+                     max_conf = d.conf
+                 cluster_dets.append(d)
+             cluster_indices.append(idx)
+             
+        # [Strategy Check] Only keep cluster if at least one detection > 0.9
+        if max_conf < 0.9:
+            print(f"Skipping cluster with max conf {max_conf:.2f} < 0.9")
+            continue
+            
+        # If valid, we pick the 'optimal' geometry (highest score) but keep ALL files
+        # Find index with max score in cluster logic? 
+        # Original logic: optimal_images.append(max(cluster, key=lambda x: x[1])[0]) -> image with max COUNT
+        # Let's stick to image with max count for the GEOMETRY master, or specific det with max conf?
+        # Let's use max conf detection as the "Geometry Master" to generate the box.
+        
+        current_best_det = max(cluster_dets, key=lambda x: x.conf)
+        
+        # Collect all unique source files
+        source_files = list(set([d.file for d in cluster_dets]))
+        
+        # We need to construct a flat list for detections_to_bboxes
+        # detections_to_bboxes expects list of (bbox, conf, label) - wait, I updated it to expect 4 items?
+        # Actually detections_to_bboxes takes (file, name, conf, bbox) tuples (unpacked in loop)
+        # Wait, let's check detections_to_bboxes input signature in my previous edit.
+        # It iterates: `for file, name, confidence, bbox in detections:`
+        # So I need to pass the "Master" detection, but append the list of sources to it?
+        # detections_to_bboxes projects 2D to 3D. It needs ONE 2D box to project.
+        # So I pass `current_best_det` info, but I need to carry `source_files` list.
+        # Hack: Pass `source_files` list INSTEAD of single `file` string?
+        # Or modify detections_to_bboxes to accept extra arg?
+        # Let's Modify detections_to_bboxes logic slightly or just pass the list in the 'file' slot and handle it?
+        # No, `load_metadata` uses `file` to finding json. It expects a string path.
+        # So I must pass the MASTER file path as `file` (to get intrinsics), and pass the LIST separately?
+        # `detections_to_bboxes` in projecting.py expects list of 4-tuples.
+        # I should change the 4th element (bbox) or add a 5th element?
+        # `Detection` namedtuple is (file, name, conf, bbox).
+        
+        # I will create a custom tuple for `detections_to_bboxes` input
+        # (master_file, name, conf, bbox, all_source_files)
+        # And I need to update `detections_to_bboxes` to handle this 5-tuple.
+        
+        detections_flat.append((current_best_det.file, current_best_det.name, current_best_det.conf, current_best_det.bbox, source_files))
+    
+    # Load mesh for NMS validation (indices)
+    # Try mesh_labeled.ply, else mesh.ply, else scene.ply
+    mesh_path = os.path.join(dir_path, 'mesh_labeled.ply')
+    if not os.path.exists(mesh_path):
+        mesh_path = os.path.join(dir_path, 'mesh.ply')
+    
+    if not os.path.exists(mesh_path):
+        mesh_path = os.path.join(dir_path, 'scene.ply')
+        
+    if not os.path.exists(mesh_path):
+        # Fallback to export/scene.ply logic?
+        # The runner should ensure mesh exists.
+        print(f"Error: Mesh not found (checked mesh_labeled.ply, mesh.ply, scene.ply) in {dir_path}")
+        return []
 
-    all_bbox_indices = [(np.array(bbox.get_point_indices_within_bounding_box(pcd_original.points)), conf) for bbox, conf in bboxes_3d]
+    pcd_original = o3d.io.read_point_cloud(mesh_path)
+    points_np = np.asarray(pcd_original.points)
+    
+    # detections_to_bboxes returns list of (bbox, confidence, label, source_imgs)
+    bboxes_3d = detections_to_bboxes(points_np, detections_flat)
 
-    registered_indices = []
-    for indcs, conf in all_bbox_indices:     
-        for idx, (reg_indcs, confidence) in enumerate(registered_indices):
+    # Prepare for NMS
+    # Store (bbox_obj, confidence, label, indices, source_imgs)
+    all_bbox_indices = []
+    for bbox, conf, label, source_imgs in bboxes_3d:
+        indices = bbox.get_point_indices_within_bounding_box(pcd_original.points)
+        all_bbox_indices.append({
+            'bbox': bbox,
+            'confidence': conf,
+            'label': label,
+            'indices': np.array(indices),
+            'source_imgs': source_imgs 
+        })
+
+    # NMS Loop
+    registered_items = []
+    for item in all_bbox_indices:
+        indcs = item['indices']
+        conf = item['confidence']
+        
+        merged = False
+        for idx, reg_item in enumerate(registered_items):
+            reg_indcs = reg_item['indices']
+            reg_conf = reg_item['confidence']
+            
             iou = compute_iou(reg_indcs, indcs)
-            if iou > 0.1:  # Check if the overlap is greater than 10%
-                if conf > confidence:
-                    registered_indices[idx] = (indcs, conf)
+            
+            # Distance check (for cases where points are sparse/disjoint but objects are same)
+            dist = np.linalg.norm(item['bbox'].center - reg_item['bbox'].center)
+            
+            # Adaptive threshold based on label
+            # Fridges and Doors are large, so allow larger merge radius
+            lbl = item['label'].lower()
+            if "refrigerator" in lbl or "door" in lbl:
+                 dist_thresh = 1.0
+            else:
+                 dist_thresh = 0.6
+            
+            # DEBUG LOGGING (Added for Diagnostics)
+            print(f"[NMS] Comparison: Candidate({lbl}, conf={conf:.2f}) vs Registered({reg_item['label']}, conf={reg_conf:.2f})")
+            print(f"      Dist: {dist:.3f} (Thresh: {dist_thresh}), IoU: {iou:.3f}")
+
+            # Merge if IoU is significant OR centroids are very close
+            if iou > 0.1 or dist < dist_thresh: 
+                print(f"      -> MERGING!")
+                if conf > reg_conf:
+                    # Replace with better detection
+                    registered_items[idx] = item
+                merged = True
                 break
-        else:
-            registered_indices.append((indcs, conf))
+
+
+        
+        if not merged:
+            registered_items.append(item)
     
-    return [indcs for (indcs, _) in sorted(registered_indices, key=lambda x: x[1])]
+    # Sort and return dicts
+    # Sort by confidence? Original sorted by score (x[1]).
+    registered_items.sort(key=lambda x: x['confidence'])
+    
+    return registered_items
 
 
 def dbscan_clustering(detections):
@@ -276,5 +431,3 @@ def mean_shift_clustering(detections):
             
     return image_indices
 
-if __name__ == "__main__":
-    _ = register_drawers("/home/cvg-robotics/tim_ws/spot-compose-tim/data/prescans/24-08-01a", vis_block=True)

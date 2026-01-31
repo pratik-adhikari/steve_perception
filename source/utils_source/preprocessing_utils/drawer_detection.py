@@ -18,7 +18,7 @@ from utils_source.recursive_config import Config
 BBox = namedtuple("BBox", ["xmin", "ymin", "xmax", "ymax"])
 Detection = namedtuple("Detection", ["file", "name", "conf", "bbox"])
 
-config = Config()
+config = Config("drawer")
 
 COLORS = {
     "door": (0.651, 0.243, 0.957),
@@ -57,6 +57,7 @@ def draw_boxes(image: np.ndarray, detections: list[Detection], output_path: str)
     plt.axis("off")
     if detections != []:
         plt.savefig(output_path)
+    plt.close()
 
 def predict_yolodrawer(
     image: np.ndarray,
@@ -65,6 +66,7 @@ def predict_yolodrawer(
     timeout: int = 90,
     input_format: str = "rgb",
     vis_block: bool = False,
+    debug_output_dir: Optional[str] = None
 ) -> list[Detection] | None:
     assert image.shape[-1] == 3
     if input_format == "bgr":
@@ -89,26 +91,48 @@ def predict_yolodrawer(
     # no detections
     if len(contents) == 0:
         if vis_block:
-            draw_boxes(image, [], image_name + "_detections.png")
+             if debug_output_dir:
+                 os.makedirs(debug_output_dir, exist_ok=True)
+                 out_path = os.path.join(debug_output_dir, f"{image_prefix}_no_detections.png")
+                 draw_boxes(image, [], out_path)
+             # Legacy fallback omitted for clarity/safety if not needed, or we can keep it inside an else
         return [], 0
 
     classes = contents["classes"]
     confidences = contents["confidences"]
     bboxes = contents["bboxes"]
 
-    detections = []
+    vis_thresh = config["drawer_model"].get("vis_threshold", 0.5)
+    return_thresh = config["drawer_model"].get("conf_threshold", 0.7) # Lowered to 0.7 to allow consolidation
+
+    vis_detections = []
+    return_detections = []
+
     for cls, conf, bbox in zip(classes, confidences, bboxes):
         name = CATEGORIES[str(int(cls))]
-        if name != "handle" and conf > 0.75:
+        if name != "handle":
+            # Detection object
             det = Detection(image_name, name, conf, BBox(*bbox))
-            detections.append(det)
+            
+            # Add to visualization list if above low threshold
+            if conf > vis_thresh:
+                vis_detections.append(det)
+            
+            # Add to return list if above high threshold
+            if conf > return_thresh:
+                return_detections.append(det)
 
     if vis_block:
-        path = config.get_subpath("ipad_scans")
-        ending = config["pre_scanned_graphs"]["high_res"]
-        
-        draw_boxes(image, detections, os.path.join(path, ending, "detections", f"{image_prefix}_detections.png"))
+        if debug_output_dir:
+            os.makedirs(debug_output_dir, exist_ok=True)
+            out_path = os.path.join(debug_output_dir, f"{image_prefix}_detections.png")
+            draw_boxes(image, vis_detections, out_path)
+        else:
+             # Legacy path
+            path = config.get_subpath("ipad_scans")
+            ending = config["pre_scanned_graphs"]["high_res"]
+            draw_boxes(image, vis_detections, os.path.join(path, ending, "detections", f"{image_prefix}_detections.png"))
     
     shutil.rmtree("tmp")
     
-    return detections, len(detections)
+    return return_detections, len(return_detections)
