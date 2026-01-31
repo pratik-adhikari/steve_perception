@@ -27,32 +27,51 @@ class ObjectNode:
         dimensions (np.ndarray): Dimensions of the object, derived from its bounding box (width, depth, height).
     """
 
-    def __init__(self, object_id: int, color: tuple, sem_label: str, points: np.ndarray, mesh_mask: np.ndarray, confidence: float = None, movable: bool = True):
+    def __init__(self, object_id: int, color: tuple, sem_label: str, points: np.ndarray, mesh_mask: np.ndarray, confidence: float = 1.0, movable: bool = True, yolo_box: Optional[dict] = None, source_imgs: list = None):
         """
-        Initializes an ObjectNode with specified attributes, computes its centroid. Generic building block for scene graph.
+        Initializes an ObjectNode with specified attributes.
 
         :param object_id: Unique identifier for the object.
-        :param color: RGB color tuple representing the object.
-        :param sem_label: Semantic label for the object.
-        :param points: Array of 3D points representing the object's geometry.
-        :param tracking_points: List of key points used for tracking the object's position.
-        :param mesh_mask: Binary mask representing the object's mesh.
-        :param confidence: Confidence score of the detection. Defaults to None.
-        :param movable: Flag indicating if the object is movable. Defaults to True.
+        :param color: RGB color tuple associated with the object.
+        :param sem_label: Semantic label of the object.
+        :param points: Point cloud data for the object.
+        :param mesh_mask: Boolean mask indicating the object's presence in the mesh.
+        :param confidence: Confidence score of the detection. Defaults to 1.0.
+        :param movable: Boolean indicating if the object is movable. Defaults to True.
+        :param yolo_box: Optional dictionary containing 'center', 'extent', 'rotation' from YOLO 3D detection.
+        :param source_imgs: List of source image filenames.
         """
         self.object_id = object_id
         self.color = color
         self.sem_label = sem_label
-        self.centroid = np.mean(points, axis=0)
         self.points = points
         self.mesh_mask = mesh_mask
         self.confidence = confidence
         self.movable = movable
-        self.misplaced = False #NEW
+        self.centroid = np.mean(points, axis=0) if len(points) > 0 else np.zeros(3)
+        self.bbox_pose = None # Will be set if yolo_box is provided
+        self.source_imgs = source_imgs # Track source images
         
         self.update_hull_tree()
         self.compute_pose(self.points, self.centroid)
-        self.get_dimensions() #NEW
+        self.get_dimensions()
+        
+        # [Fix for 2D Square Objects]
+        if yolo_box:
+            center = np.array(yolo_box['center'])
+            extent = np.array(yolo_box['extent'])
+            rotation = np.array(yolo_box['rotation'])
+            
+            # Create OBB from YOLO data
+            self.bb = o3d.geometry.OrientedBoundingBox(center, rotation, extent)
+            self.bb.color = (0, 0, 1) # Blue
+            self.dimensions = extent
+            # Note: ObjectNode uses self.bb, DrawerNode uses self.box. A bit inconsistent but keeping legacy.
+            
+            # [Fix for Visualization] Sync self.pose with OBB pose so downstream visualizers use the correct rotation
+            self.pose = np.eye(4)
+            self.pose[:3, :3] = rotation
+            self.pose[:3, 3] = center
         
     
     def update_hull_tree(self) -> None:
@@ -174,29 +193,43 @@ class DrawerNode(ObjectNode):
         contains (list): List of objects contained within the drawer.
     """
 
-    def __init__(self, object_id: int, color: tuple, sem_label: str, points: np.ndarray, mesh_mask: np.ndarray, confidence: float = 1.0, movable: bool = True):
+    def __init__(self, object_id: int, color: tuple, sem_label: str, points: np.ndarray, mesh_mask: np.ndarray, confidence: float = 1.0, movable: bool = True, yolo_box: Optional[dict] = None, source_imgs: list = None):
         """
         Initializes a DrawerNode with specified attributes and performs plane segmentation.
 
-        This constructor initializes DrawerNode properties inherited from ObjectNode and performs 
-        plane segmentation to determine the drawer's orientation in the 3D scene. Additional attributes 
-        are set to manage the drawer's bounding box, relationships, and contained objects.
-
-        :param object_id: Unique identifier for the drawer.
-        :param color: RGB color tuple representing the drawer's color.
-        :param sem_label: Semantic label for the drawer.
-        :param points: Array of 3D points representing the drawer.
-        :param mesh_mask: Binary mask representing the drawer's mesh.
-        :param confidence: Confidence score of the detection. Defaults to 1.0.
-        :param movable: Flag indicating if the drawer is movable. Defaults to True.
+        :param yolo_box: Optional dictionary containing 'center', 'extent', 'rotation' from YOLO 3D detection.
+                         If provided, forces the box dimensions instead of heuristic calculation.
+        :param source_imgs: List of source image filenames used for detection.
         """
-        super().__init__(object_id, color, sem_label, points, mesh_mask, confidence, movable)
+        super().__init__(object_id, color, sem_label, points, mesh_mask, confidence, movable, yolo_box=yolo_box, source_imgs=source_imgs)
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        self.equation, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
+        if len(points) > 0:
+            pcd.points = o3d.utility.Vector3dVector(points)
+            self.equation, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
+        else:
+            self.equation = np.array([0, 0, 1, 0]) # Default up vector if no points
+
         self.box = None
         self.belongs_to = None
         self.contains = []
+        
+        # [Fix for 2D Square Drawers]
+        if yolo_box:
+            center = np.array(yolo_box['center'])
+            extent = np.array(yolo_box['extent'])
+            rotation = np.array(yolo_box['rotation'])
+            
+            # Create OBB from YOLO data
+            self.box = o3d.geometry.OrientedBoundingBox(center, rotation, extent)
+            self.box.color = (0, 0, 1) # Blue
+            self.dimensions = extent
+            # Also update centroid to match box center if desired? 
+            # self.centroid = center # Actually, let's keep centroid as point average, but box as "True" extent
+            
+            # [Fix for Visualization] Sync self.pose with OBB pose
+            self.pose = np.eye(4)
+            self.pose[:3, :3] = rotation
+            self.pose[:3, 3] = center
     
     def sign_check(self, point: np.ndarray) -> bool:
         """

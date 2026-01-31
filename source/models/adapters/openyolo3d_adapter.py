@@ -83,77 +83,172 @@ class OpenYolo3DAdapter(BaseSegmentationAdapter):
         
         self.logger.info(f"[OpenYOLO3D] Running prediction with {len(vocabulary)} text prompts")
         
-        # Run prediction (merged from interface.py)
-        prediction = self.model.predict(
-            path_2_scene_data=scene_path,
-            depth_scale=depth_scale,
-            text=vocabulary,
-            datatype="point cloud"
-        )
-        
-        # Extract results from library return format
-        scene_name = list(prediction.keys())[0]
-        masks, classes, scores = prediction[scene_name]
-        
-        self.logger.info(f"[OpenYOLO3D] Prediction complete for scene: {scene_name}")
-        self.logger.info(f"[OpenYOLO3D]   → Masks shape: {masks.shape}")
-        self.logger.info(f"[OpenYOLO3D]   → Classes shape: {classes.shape}, unique: {classes.unique().tolist() if len(classes) > 0 else []}")
-        
-        # Handle empty results gracefully
-        if len(scores) > 0:
-            self.logger.info(f"[OpenYOLO3D]   → Scores shape: {scores.shape}, range: [{scores.min():.4f}, {scores.max():.4f}]")
-            self.logger.info(f"[OpenYOLO3D]   → Total instances: {len(scores)}")
-            
-            # Log score distribution
-            high_conf = (scores > 0.5).sum().item()
-            med_conf = ((scores > 0.1) & (scores <= 0.5)).sum().item()
-            low_conf = (scores <= 0.1).sum().item()
-            self.logger.info(f"[OpenYOLO3D]   → Score distribution: >0.5: {high_conf}, 0.1-0.5: {med_conf}, <0.1: {low_conf}")
-        else:
-            self.logger.warning(f"[OpenYOLO3D]   → NO INSTANCES DETECTED! Scores shape: {scores.shape}")
-            self.logger.warning(f"[OpenYOLO3D]   → This likely means either:")
-            self.logger.warning(f"[OpenYOLO3D]        1. No 3D mask proposals were generated (Mask3D step failed)")
-            self.logger.warning(f"[OpenYOLO3D]        2. No 2D bounding boxes were detected (YOLO-World step failed)")
-            self.logger.warning(f"[OpenYOLO3D]        3. The 3D-2D matching process filtered out all instances")
-        
-        # Load point cloud data
+        # [Preprocess] Externalize coordinate handling as requested
         import open3d as o3d
+        import tempfile
+        
+        # 1. Load Data (High Res if requested)
+        preprocessing_config = self.config.get('preprocessing', {})
+        load_high_res = preprocessing_config.get('load_high_res', False)
+        
+        # Default to scene.ply
         mesh_path = os.path.join(scene_path, 'scene.ply')
-        if not os.path.exists(mesh_path):
-            # Fallback to mesh.ply
-            mesh_path = os.path.join(scene_path, 'mesh.ply')
+        
+        # Helper to safely load and check colors
+        def load_and_validate(path):
+            if not os.path.exists(path): return None
+            try:
+                if path.endswith('.obj'):
+                    m = o3d.io.read_triangle_mesh(path, enable_post_processing=True)
+                    if m.has_vertices():
+                         # If mesh has textures but no vertex colors, this might fail to capture color.
+                         # Open3D read_triangle_mesh doesn't autosample texture to vertex color.
+                         if not m.has_vertex_colors() and not m.has_textures():
+                             return None # No color source
+                         if m.has_vertex_colors():
+                             p = o3d.geometry.PointCloud()
+                             p.points = m.vertices
+                             p.colors = m.vertex_colors
+                             return p
+                         # If texture, we'd need complex sampling. Skip for now.
+                         return None
+                
+                # Try as point cloud (PLY)
+                p = o3d.io.read_point_cloud(path)
+                if p.has_points() and p.has_colors():
+                    return p
+            except:
+                pass
+            return None
+
+        pcd = None
+        if load_high_res:
+             candidates = [
+                os.path.join(scene_path, "textured_output.obj"),
+                os.path.join(scene_path, "visualization/mesh.ply"),
+                os.path.join(scene_path, "visualization/raw_mesh.ply")
+             ]
+             for cand in candidates:
+                 pcd_cand = load_and_validate(cand)
+                 if pcd_cand is not None:
+                     self.logger.info(f"[OpenYOLO3D-Adapter] Found High-Res Source with Colors: {cand}")
+                     mesh_path = cand
+                     pcd = pcd_cand
+                     break
+                 else:
+                     if os.path.exists(cand):
+                         self.logger.warning(f"[OpenYOLO3D-Adapter] Candidate {cand} exists but has no readable colors. Skipping.")
+        
+        # Fallback to scene.ply if high-res failed or not requested
+        if pcd is None:
+             self.logger.info(f"[OpenYOLO3D-Adapter] Loading baseline {mesh_path}...")
+             pcd = o3d.io.read_point_cloud(mesh_path)
+        
+        if not pcd.has_points():
+             self.logger.error(f"[OpenYOLO3D-Adapter] Failed to load any point cloud from {mesh_path}!")
+             return SegmentationResult(masks=np.array([]), classes=np.array([]), scores=np.array([]), points=None, colors=None, mesh_path=mesh_path)
+
+        original_points = np.asarray(pcd.points)
+        original_colors = np.asarray(pcd.colors) if pcd.has_colors() else np.ones_like(original_points) * 0.5
+        
+        if not pcd.has_colors():
+            # This is critical for OpenYOLO3D
+            self.logger.warning("[OpenYOLO3D-Adapter] WARNING: Input has no colors! Model performance will be degraded.")
             
-        points = None
-        colors = None
+        # Determine effective voxel size scaling
+        target_voxel_size = float(preprocessing_config.get('target_voxel_size', 0.05))
+        model_voxel_size = 0.02
+        scale_factor = model_voxel_size / target_voxel_size
         
-        if os.path.exists(mesh_path):
-            pcd = o3d.io.read_point_cloud(mesh_path)
-            points = np.asarray(pcd.points)
-            colors = np.asarray(pcd.colors) if pcd.has_colors() else None
+        # Prepare processed copy
+        pcd_proc = o3d.geometry.PointCloud()
+        pcd_proc.points = o3d.utility.Vector3dVector(original_points.copy())
+        if pcd.has_colors():
+            pcd_proc.colors = o3d.utility.Vector3dVector(original_colors.copy())
+        else:
+            # Assign gray if missing (silent fail handled by warning above)
+            pcd_proc.colors = o3d.utility.Vector3dVector(original_colors.copy())
         
-        # Convert to numpy
-        masks_np = masks.cpu().numpy()
-        classes_np = classes.cpu().numpy()
-        scores_np = scores.cpu().numpy()
+        # 2. Apply Transformations
+        # Center
+        if preprocessing_config.get('center_coordinates', True):
+            mean = np.mean(original_points, axis=0)
+            self.logger.info(f"[OpenYOLO3D-Adapter] Centering coordinates (Mean: {mean})")
+            pcd_proc.translate(-mean)
+            
+        # Rotate Z-up to Model Space (if needed)
+        # Assuming model expects Y-up or different convention. 
+        # Standard Mask3D transform: Rx(90) * Rz(270)
+        if preprocessing_config.get('rotate_z_up', True):
+            self.logger.info(f"[OpenYOLO3D-Adapter] Rotating Z-up to Model Space")
+            # R_x_90 (Z->Y, Y->-Z)
+            R_x = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+            pcd_proc.rotate(R_x, center=(0,0,0))
+            
+            # R_z_270 (X->Y, Y->-X)
+            R_z = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
+            pcd_proc.rotate(R_z, center=(0,0,0))
+            
+        # Scale for Voxel Size
+        if abs(scale_factor - 1.0) > 1e-6:
+            self.logger.info(f"[OpenYOLO3D-Adapter] Scaling geometry by {scale_factor:.4f} (Target Voxel: {target_voxel_size})")
+            pcd_proc.scale(scale_factor, center=(0,0,0))
+            
+        # 3. Save Temp File
+        fd, temp_path = tempfile.mkstemp(suffix='.ply')
+        os.close(fd)
         
-        self.logger.info(f"[OpenYOLO3D] Returning result:")
-        self.logger.info(f"[OpenYOLO3D]   → masks: {masks_np.shape}, dtype: {masks_np.dtype}")
-        self.logger.info(f"[OpenYOLO3D]   → classes: {classes_np.shape}, dtype: {classes_np.dtype}")
-        self.logger.info(f"[OpenYOLO3D]   → scores: {scores_np.shape}, dtype: {scores_np.dtype}")
-        self.logger.info(f"[OpenYOLO3D]   → points: {points.shape if points is not None else None}")
-        self.logger.info(f"[OpenYOLO3D]   → Total instances: {len(scores_np)}")
+        # We must save as PLY for OpenYOLO3D to load it
+        o3d.io.write_point_cloud(temp_path, pcd_proc)
+        self.logger.info(f"[OpenYOLO3D-Adapter] Saved preprocessed input to {temp_path}")
         
-        return SegmentationResult(
-            masks=masks_np,
-            classes=classes_np,
-            scores=scores_np,
-            points=points,
-            colors=colors,
-            mesh_path=mesh_path,
-            metadata={
-                'model': 'openyolo3d',
-                'vocabulary': vocabulary,
-                'frame_step': frame_step,
-                'conf_threshold': conf_thresh
-            }
-        )
+        try:
+            prediction = self.model.predict(
+                path_2_scene_data=scene_path,
+                depth_scale=depth_scale,
+                text=vocabulary,
+                datatype="point cloud",
+                processed_scene=temp_path 
+            )
+            
+            # Extract results
+            scene_name = list(prediction.keys())[0]
+            masks, classes, scores = prediction[scene_name]
+            
+            self.logger.info(f"[OpenYOLO3D] Prediction complete for scene: {scene_name}")
+            
+            # Convert to numpy
+            masks_np = masks.cpu().numpy()
+            
+            # Verification
+            if masks_np.shape[0] != original_points.shape[0]:
+                 self.logger.warning(f"[OpenYOLO3D-Adapter] Mismatch! Masks: {masks_np.shape[0]}, Orig: {original_points.shape[0]}")
+                 # This should not happen if temp_path preserved order logic
+                 # If it happens, we might need to rely on the points OpenYOLO3D used (loaded from temp)
+                 # But we want original coordinates.
+            else:
+                 self.logger.info(f"[OpenYOLO3D-Adapter] Output aligned with original points.")
+
+            classes_np = classes.cpu().numpy()
+            scores_np = scores.cpu().numpy()
+            
+            return SegmentationResult(
+                masks=masks_np,
+                classes=classes_np,
+                scores=scores_np,
+                points=original_points, # Return ORIGINAL points for correct downstream visualization/export
+                colors=original_colors,
+                mesh_path=mesh_path,
+                metadata={
+                    'model': 'openyolo3d',
+                    'vocabulary': vocabulary,
+                    'frame_step': frame_step,
+                    'conf_threshold': conf_thresh
+                }
+            )
+            
+        finally:
+            # Cleanup
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                self.logger.info(f"[OpenYOLO3D-Adapter] Cleaned up temp file")

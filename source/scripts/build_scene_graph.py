@@ -44,6 +44,41 @@ def get_default_label_mapping() -> dict:
     return dict(zip(VALID_CLASS_IDS_200, CLASS_LABELS_200))
 
 
+import datetime
+import logging
+
+def setup_logger(output_path):
+    # Try to find common logs folder (../logs relative to output)
+    # If output is 'data/pipeline_output/generated_graph', parent is 'data/pipeline_output'
+    # logs should be 'data/pipeline_output/logs'
+    
+    out_path = Path(output_path).resolve()
+    parent = out_path.parent
+    log_dir = parent / "logs"
+    
+    # If parent doesn't look like a pipeline root, just log locally?
+    # But let's force creation.
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = log_dir / f"scene_graph_{timestamp}.log"
+    
+    logger = logging.getLogger("SceneGraph")
+    logger.setLevel(logging.INFO)
+    
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    
+    return logger
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generate scene graph from segmentation results',
@@ -70,15 +105,42 @@ Examples:
     
     args = parser.parse_args()
     
+    # Setup Logger
+    logger = setup_logger(args.output)
+    
     # Validate input directory
-    # User provides the main output folder (e.g. data/pipeline_output/openyolo3d_output)
-    # We expect 'mask3d_output' to be inside it.
-    mask3d_dir = os.path.join(args.input, 'mask3d_output')
+    # User provides the main output folder (e.g. data/pipeline_output/combined_output)
+    # Wait, the script historically appended 'mask3d_output'.
+    # OLD CODE: mask3d_dir = os.path.join(args.input, 'mask3d_output')
+    # BUT if input IS the combined output (which mimics mask3d_output structure somewhat), maybe we shouldn't append?
+    # CombineInferences puts stuff DIRECTLY in combined_output/pred_mask, output/predictions.txt
+    # So combined_output structure IS:
+    #   combined_output/predictions.txt
+    #   combined_output/pred_mask/
+    #   combined_output/mesh.ply
+    
+    # BUT build_scene_graph logic (lines 76-77):
+    # mask3d_dir = os.path.join(args.input, 'mask3d_output')
+    # predictions_file = os.path.join(mask3d_dir, 'predictions.txt')
+    
+    # If we run Step 3: combine_inferences output 'combined_output'
+    # It contains predictions.txt directly.
+    # So if we pass --input combined_output, the old script will look for combined_output/mask3d_output/predictions.txt
+    # THIS WILL FAIL.
+    
+    # I should check if predictions.txt exists directly in args.input, verify, and fallback.
+    
+    mask3d_dir = args.input
     predictions_file = os.path.join(mask3d_dir, 'predictions.txt')
     
     if not os.path.exists(predictions_file):
-        print(f"[ERROR] predictions.txt not found at {predictions_file}")
-        print(f"[ERROR] Make sure you run run_segmentation.py first")
+        # Try legacy structure
+        mask3d_dir = os.path.join(args.input, 'mask3d_output')
+        predictions_file = os.path.join(mask3d_dir, 'predictions.txt')
+        
+    if not os.path.exists(predictions_file):
+        logger.error(f"predictions.txt not found at {predictions_file} or in {args.input}")
+        logger.error(f"Make sure you run run_segmentation.py first")
         return 1
     
     # Create output directory
@@ -88,21 +150,27 @@ Examples:
     label_mapping = load_label_mapping(args.input)
     
     if not label_mapping:
-        print("[ERROR] Label mapping not found/loaded.")
-        return 1
+        logger.warning("Label mapping CSV not found. Using default ScanNet200 mapping.")
+        label_mapping = get_default_label_mapping()
+
+    if not label_mapping:
+         logger.error("Failed to load any label mapping.")
+         return 1
     
     # Define immovable objects (furniture)
     if not args.immovable:
         immovable = ["table", "chair", "sofa", "bed", "desk", "shelving", "cabinet", 
-                    "bookshelf", "counter", "armchair", "shelf", "end table"]
+                    "bookshelf", "counter", "armchair", "shelf", "end table",
+                    "refrigerator", "stove", "oven", "washing machine", "dishwasher", "fireplace", "door"]
+
     else:
         immovable = args.immovable
     
-    print(f"[SceneGraph] Creating scene graph...")
-    print(f"  Input: {args.input}")
-    print(f"  Output: {args.output}")
-    print(f"  Min confidence: {args.min_confidence}")
-    print(f"  Immovable categories: {immovable}")
+    logger.info(f"Creating scene graph...")
+    logger.info(f"  Input: {mask3d_dir}")
+    logger.info(f"  Output: {args.output}")
+    logger.info(f"  Min confidence: {args.min_confidence}")
+    logger.info(f"  Immovable categories: {immovable}")
     
     # Initialize scene graph
     scene_graph = SceneGraph(
@@ -114,11 +182,11 @@ Examples:
     # Build scene graph from predictions
     try:
         scene_graph.build(mask3d_dir, drawers=not args.no_drawers)
-        print(f"[SceneGraph] Built graph with {len(scene_graph.nodes)} nodes")
+        logger.info(f"Built graph with {len(scene_graph.nodes)} nodes")
     except Exception as e:
-        print(f"[ERROR] Failed to build scene graph: {e}")
+        logger.error(f"Failed to build scene graph: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         return 1
     
     # Apply color palette
@@ -129,32 +197,32 @@ Examples:
         # Save full graph
         graph_path = os.path.join(args.output, 'graph.json')
         scene_graph.save_full_graph_to_json(graph_path)
-        print(f"[SceneGraph] Saved graph to {graph_path}")
+        logger.info(f"Saved graph to {graph_path}")
         
         # Save furniture
         furniture_path = os.path.join(args.output, 'furniture.json')
         scene_graph.save_furniture_to_json(furniture_path)
-        print(f"[SceneGraph] Saved furniture to {furniture_path}")
+        logger.info(f"Saved furniture to {furniture_path}")
         
         # Save individual objects
         objects_dir = os.path.join(args.output, 'objects')
         scene_graph.save_objects_to_json(objects_dir)
-        print(f"[SceneGraph] Saved objects to {objects_dir}")
+        logger.info(f"Saved objects to {objects_dir}")
         
         # Save drawers if present
         if not args.no_drawers:
             drawers_dir = os.path.join(args.output, 'drawers')
             scene_graph.save_drawers_to_json(drawers_dir)
-            print(f"[SceneGraph] Saved drawers to {drawers_dir}")
+            logger.info(f"Saved drawers to {drawers_dir}")
         
-        print(f"\n[SUCCESS] Scene graph generation complete!")
-        print(f"  Nodes: {len(scene_graph.nodes)}")
-        print(f"  Connections: {len(scene_graph.outgoing)}")
+        logger.info(f"\n[SUCCESS] Scene graph generation complete!")
+        logger.info(f"  Nodes: {len(scene_graph.nodes)}")
+        logger.info(f"  Connections: {len(scene_graph.outgoing)}")
         
     except Exception as e:
-        print(f"[ERROR] Failed to save scene graph: {e}")
+        logger.error(f"Failed to save scene graph: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         return 1
     
     # Generate Interactive HTML Visualization
@@ -163,15 +231,17 @@ Examples:
         html_path = os.path.join(args.output, "scene_graph_interactive.html")
         visualize_scene_graph_interactive(scene_graph, html_path)
     except Exception as e:
-        print(f"[WARNING] Interactive visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        logger.warning(f"Interactive visualization failed: {e}")
 
     # Optional visualization (GUI)
     if args.visualize:
         try:
-            print(f"\n[SceneGraph] Launching visualization...")
+            logger.info(f"\nLaunching visualization...")
             scene_graph.visualize(labels=True, connections=True, centroids=True)
         except Exception as e:
-            print(f"[WARNING] Visualization failed: {e}")
+            logger.warning(f"Visualization failed: {e}")
     
     return 0
 

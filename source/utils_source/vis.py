@@ -172,15 +172,35 @@ def visualize_scene_graph_interactive(scene_graph, output_path: str):
     fig = go.Figure()
     pos = {}
 
-    def add_object_trace(oid, label, centroid, dims, color, symbol='circle', pose=None):
+    def add_object_trace(oid, label, centroid, dims, color, symbol='circle', pose=None, source_imgs=None):
         pos[oid] = centroid
         
+        # Format text
+        display_text = f"{oid}:{label}"
+        
+        # Handle list of source images
+        if source_imgs and isinstance(source_imgs, list):
+            import os
+            # Limit to top 3 for cleaner UI, or show simple list
+            display_count = len(source_imgs)
+            for i, img_path in enumerate(source_imgs[:3]):
+                fname = os.path.basename(img_path)
+                display_text += f"<br>Src{i+1}: {fname}"
+            
+            if display_count > 3:
+                display_text += f"<br>... (+{display_count-3} more)"
+        elif source_imgs and isinstance(source_imgs, str):
+             # Legacy fallback
+             import os
+             fname = os.path.basename(source_imgs)
+             display_text += f"<br>Src: {fname}"
+
         # Centroid
         fig.add_trace(go.Scatter3d(
             x=[centroid[0]], y=[centroid[1]], z=[centroid[2]],
             mode='markers+text',
             marker=dict(size=5, color=color, symbol=symbol),
-            text=[f"{oid}:{label}"],
+            text=[display_text],
             textposition="top center",
             name=f"{oid}:{label}",
             hoverinfo='text'
@@ -194,14 +214,16 @@ def visualize_scene_graph_interactive(scene_graph, output_path: str):
              fig.add_trace(go.Scatter3d(
                 x=bx, y=by, z=bz,
                 mode='lines',
-                line=dict(color=color, width=2),
+                line=dict(color=color, width=5),
                 showlegend=False,
                 hoverinfo='skip'
             ))
 
     # Iterate nodes
     for node in scene_graph.nodes.values():
-        label = scene_graph.label_mapping.get(node.sem_label, "ID not found")
+        # [Fix] node.sem_label is already the resolved string (e.g. "door")
+        # Do not look it up again in label_mapping (which keys by int ID)
+        label = node.sem_label
         
         # Get color (0-1 float or 0-255 int depending on source)
         # Using rgb string for plotly
@@ -213,30 +235,35 @@ def visualize_scene_graph_interactive(scene_graph, output_path: str):
 
         # Helper to get pose safely
         pose = getattr(node, 'bbox_pose', getattr(node, 'pose', None))
-        # If node has 'bb' (oriented bbox), we might want its center/rotation.
-        # node.dimensions usually comes from get_dimensions() which sets self.bb = obb
-        # and self.dimensions = obb.extent.
-        # But obb has its own center/rotation.
-        # If we use node.centroid and node.pose, it should align if node.pose is the object pose.
-        # For DrawerNode, check constraints.
+        
+        # Get Source Image safely
+        source_imgs = getattr(node, 'source_imgs', getattr(node, 'source_img', None))
         
         # Determine format/color
         if isinstance(node, DrawerNode):
              # Drawers
-             add_object_trace(node.object_id, label, node.centroid, node.dimensions, color_str, 'diamond', pose=pose)
+             add_object_trace(node.object_id, label, node.centroid, node.dimensions, color_str, 'diamond', pose=pose, source_imgs=source_imgs)
         else:
              # Movable or Furniture
-             add_object_trace(node.object_id, label, node.centroid, getattr(node, 'dimensions', None), color_str, 'circle', pose=pose)
+             add_object_trace(node.object_id, label, node.centroid, getattr(node, 'dimensions', None), color_str, 'circle', pose=pose, source_imgs=source_imgs)
 
     # Connections
     cx, cy, cz = [], [], []
-    for src, target in scene_graph.outgoing.items():
-        if src in pos and target in pos:
-            p1 = pos[src]
-            p2 = pos[target]
-            cx.extend([p1[0], p2[0], None])
-            cy.extend([p1[1], p2[1], None])
-            cz.extend([p1[2], p2[2], None])
+    for src, neighbors in scene_graph.outgoing.items():
+        # Defensive check
+        if not isinstance(neighbors, dict):
+            continue
+            
+        try:
+            for target in neighbors:
+                if src in pos and target in pos:
+                    p1 = pos[src]
+                    p2 = pos[target]
+                    cx.extend([p1[0], p2[0], None])
+                    cy.extend([p1[1], p2[1], None])
+                    cz.extend([p1[2], p2[2], None])
+        except Exception as e:
+            print(f"[Vis Error] Failed processing connection src={src}: {e}")
 
     fig.add_trace(go.Scatter3d(
         x=cx, y=cy, z=cz,

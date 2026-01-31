@@ -42,14 +42,7 @@ class SceneGraph:
         Initializes a SceneGraph with default configurations and empty connectivity structures.
 
         This constructor sets up the initial data structures for managing nodes and connections in the 
-        scene graph, including labels, ingoing and outgoing connections, and spatial properties. 
-        Additional parameters allow configuration of label mappings, confidence thresholds, and immovable nodes.
-
-        :param label_mapping: Dictionary for mapping semantic labels to node IDs or categories.
-        :param min_confidence: Minimum confidence threshold for including nodes in the scene. Defaults to 0.0.
-        :param k: Number of nearest neighbors to consider for spatial relations. Defaults to 2.
-        :param immovable: List of IDs or labels representing nodes that cannot be moved. Defaults to an empty list.
-        :param pose: Optional 4x4 numpy array representing the pose of the entire scene graph. Defaults to None.
+        scene graph. It also initializes the KD-tree for spatial queries if needed.
         """
         self.index = 0
         self.nodes = dict()
@@ -65,6 +58,9 @@ class SceneGraph:
         self.tree = None
         self.mesh = None
         self.pcd = None
+        
+        import logging
+        self.logger = logging.getLogger("SceneGraph")
     
     def change_coordinate_system(self, transformation: np.ndarray) -> None:
         """
@@ -85,30 +81,75 @@ class SceneGraph:
             self.pcd.transform(transformation)
         self.tree = KDTree(np.array([self.nodes[index].centroid for index in self.ids]))
 
-    def add_node(self, color: tuple, sem_label: str, points: np.ndarray, mesh_mask: np.ndarray, confidence: float) -> None:
+    def add_node(self, color: tuple, sem_label: str, points: np.ndarray, mesh_mask: np.ndarray, confidence: float, yolo_box: Optional[dict] = None, source_imgs: list = None) -> None:
         """
-        Adds a new node to the scene graph with specified attributes.
-
-        This method creates a new node with the given properties, such as color, semantic label, 
-        and 3D point data, and adds it to the scene graph. The node is assigned a unique identifier, 
-        and its spatial properties and metadata are stored within the graph.
-        Special node types, such as drawers or light switches, are handeled as well.
-
-        :param color: RGB color tuple representing the node's color.
-        :param sem_label: Semantic label categorizing the node (e.g., "drawer", "light switch").
-        :param points: Array of 3D points defining the node's geometry.
-        :param mesh_mask: Binary mask representing the node's mesh structure.
-        :param confidence: Confidence score associated with the node's detection or classification.
+        Creates and adds a new node to the graph based on the provided object attributes.
+        
+        :param color: RGB color tuple of the object.
+        :param sem_label: Semantic label/category of the object.
+        :param points: 3D points belonging to the object.
+        :param mesh_mask: Boolean mask for mesh association.
+        :param confidence: Detection confidence score.
+        :param yolo_box: Optional YOLO 3D box override (center, extent, rotation).
+        :param source_imgs: List of source image filenames contributing to this detection.
         """
-        if self.label_mapping.get(sem_label, "ID not found") in self.immovable:
-            # mark objects as immovable if a list was given
-            self.nodes[self.index] = ObjectNode(self.index, np.array([0.5, 0.5, 0.5]), sem_label, points, mesh_mask, confidence, movable=False)
-        elif sem_label == 25:
-            self.nodes[self.index] = DrawerNode(self.index, color, sem_label, points, mesh_mask, confidence)
+        # Debugging Label Mapping Mismatch
+        if self.index == 0: # Only print for first node
+             try:
+                 key_sample = list(self.label_mapping.keys())[0] if self.label_mapping else "Empty"
+                 self.logger.warning(f"[DEBUG] label_mapping first key: {key_sample} (type: {type(key_sample)})")
+                 self.logger.warning(f"[DEBUG] sem_label: {sem_label} (type: {type(sem_label)})")
+                 self.logger.warning(f"[DEBUG] Is 14 in mapping? {14 in self.label_mapping}")
+                 self.logger.warning(f"[DEBUG] Is '14' in mapping? {'14' in self.label_mapping}")
+             except Exception as e:
+                 self.logger.warning(f"[DEBUG] Failed to log types: {e}")
+
+        # Robust Lookup Logic
+        found_label = "ID not found"
+        # Try as is
+        img_label = self.label_mapping.get(sem_label)
+        if img_label:
+             found_label = img_label
         else:
-            self.nodes[self.index] = ObjectNode(self.index, color, sem_label, points, mesh_mask, confidence)
-        self.labels.setdefault(sem_label, []).append(self.index)
+             # Try int cast
+             try:
+                 img_label = self.label_mapping.get(int(sem_label))
+                 if img_label: found_label = img_label
+             except: pass
+        
+        if found_label == "ID not found":
+             # Try string cast
+             try:
+                 img_label = self.label_mapping.get(str(sem_label))
+                 if img_label: found_label = img_label
+             except: pass
+             
+        # Use simple variable for mapped string
+        sem_label_str = found_label
+        
+        if self.index == 0:
+            self.logger.warning(f"[DEBUG] Resolved sem_label '{sem_label}' to '{sem_label_str}'")
+        
+        if sem_label_str in self.immovable:
+            self.nodes[self.index] = ObjectNode(self.index, color, sem_label_str, points, mesh_mask, confidence=confidence, movable=False, yolo_box=yolo_box, source_imgs=source_imgs)
+        elif sem_label == 25:
+             # Drawers might be explicitly ID 25, or mapped string "drawer"
+             # If sem_label_str is "drawer", use DrawerNode
+             pass
+        
+        # Logic fix: if sem_label was 25, found_label should be "drawer".
+        # Check against string "drawer" or keep original check?
+        # Better to check if sem_label_str is "drawer"
+        
+        if sem_label_str == "drawer":
+            self.nodes[self.index] = DrawerNode(self.index, color, sem_label_str, points, mesh_mask, confidence=confidence, source_imgs=source_imgs, yolo_box=yolo_box)
+        elif sem_label_str in self.immovable or sem_label_str == "door": # explicit include
+            self.nodes[self.index] = ObjectNode(self.index, color, sem_label_str, points, mesh_mask, confidence=confidence, movable=False, yolo_box=yolo_box, source_imgs=source_imgs)
+        else:
+            self.nodes[self.index] = ObjectNode(self.index, color, sem_label_str, points, mesh_mask, confidence=confidence, movable=True, yolo_box=yolo_box, source_imgs=source_imgs)
+            
         self.ids.append(self.index)
+        self.outgoing[self.index] = {} # This replaces self.labels.setdefault(sem_label, []).append(self.index)
         self.index += 1
 
     
@@ -203,10 +244,24 @@ class SceneGraph:
             confidences.append(float(parts[2]))
         
         base_dir = os.path.dirname(os.path.abspath(os.path.join(scan_dir, 'predictions.txt')))
+        
+        # Robust Mesh Loading
+        mesh_path = os.path.join(scan_dir, "textured_output.obj")
+        if not os.path.exists(mesh_path):
+             mesh_path = os.path.join(scan_dir, "mesh.ply")
+        
+        if os.path.exists(mesh_path):
+             self.mesh = o3d.io.read_triangle_mesh(mesh_path, enable_post_processing=True)
+        else:
+             print(f"[Warning] No mesh found at {mesh_path}")
+             self.mesh = o3d.geometry.TriangleMesh()
 
-        self.mesh = o3d.io.read_triangle_mesh(scan_dir + "/textured_output.obj", enable_post_processing=True)
-
-        pcd = o3d.io.read_point_cloud(scan_dir + "/mesh_labeled.ply")
+        # Robust Point Cloud Loading (for labels)
+        labeled_ply_path = os.path.join(scan_dir, "mesh_labeled.ply")
+        if not os.path.exists(labeled_ply_path):
+             labeled_ply_path = os.path.join(scan_dir, "mesh.ply")
+             
+        pcd = o3d.io.read_point_cloud(labeled_ply_path)
 
         np_points = np.array(pcd.points)
         np_colors = np.array(pcd.colors)
@@ -233,16 +288,42 @@ class SceneGraph:
                     mask3d_labels[labels == 1, 0] = values[i]
                     mask3d_labels[labels == 1, 1] = i
                     
+        # Load Dimensions Map (Fix for 2D Square Drawers)
+        dims_map_path = os.path.join(scan_dir, "drawer_dimensions.json")
+        dims_map = {}
+        if os.path.exists(dims_map_path):
+            with open(dims_map_path, 'r') as f:
+                # Keys in JSON are strings, convert to int when looking up? or just string lookup
+                dims_map = json.load(f)
+             
         for i, relative_path in enumerate(file_paths):
             file_path = os.path.join(base_dir, relative_path)
             labels = np.loadtxt(file_path, dtype=np.int64)
             
             mesh_mask = np.logical_and.reduce((labels == 1, mask3d_labels[:, 0] == values[i], mask3d_labels[:, 1] == i))
             node_points = np_points[mesh_mask]
+            
+            if len(node_points) == 0:
+                 continue
+                 
             colors = np_colors[mesh_mask]
 
             if confidences[i] > self.min_confidence and node_points.shape[0] > 10:
-                self.add_node(colors[0], values[i], node_points, mesh_mask, confidences[i])
+                # Prepare YOLO Box if available (Generalize for all objects)
+                yolo_box_data = None
+                source_img = None
+                
+                # Check directly if mask ID exists in dims_map
+                try:
+                    mask_fname = os.path.basename(relative_path)
+                    mask_id = str(int(os.path.splitext(mask_fname)[0])) # "005" -> 5 -> "5"
+                    yolo_box_data = dims_map.get(mask_id)
+                    if yolo_box_data:
+                        source_imgs = yolo_box_data.get('source_imgs')
+                except Exception:
+                    pass
+                
+                self.add_node(colors[0], values[i], node_points, mesh_mask, confidences[i], yolo_box=yolo_box_data, source_imgs=source_imgs)
         
         for node in self.nodes.values():
             self.update_connection(node)
@@ -591,10 +672,10 @@ class SceneGraph:
         """
         graph_data = {
             "node_ids": self.ids,
-            "node_labels": [self.label_mapping.get(label_id, f"ID not found") for node_id in self.ids for label_id, ids in self.labels.items() if node_id in ids],
+            "node_labels": [self.nodes[node_id].sem_label for node_id in self.ids],
             "connections": self.outgoing,
             "immovable_ids": [idx for idx, node in self.nodes.items() if not node.movable],
-            "immovable_labels": [self.label_mapping.get(node.sem_label, f"ID not found") for idx, node in self.nodes.items() if not node.movable]
+            "immovable_labels": [node.sem_label for idx, node in self.nodes.items() if not node.movable]
         }
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, 'w') as f:
@@ -607,9 +688,11 @@ class SceneGraph:
         scene = {
             "furniture": {
                 idx: {
-                    "label": self.label_mapping.get(node.sem_label, "ID not found"),
+                    "label": node.sem_label,
                     "centroid": node.centroid.tolist() if isinstance(node.centroid, np.ndarray) else node.centroid,
                     "dimensions": node.dimensions.tolist() if isinstance(node.dimensions, np.ndarray) else node.dimensions, #[max(node.dimensions[0], node.dimensions[1]), min(node.dimensions[0], node.dimensions[1]), node.dimensions[2]],
+                    "pose": node.pose.tolist() if isinstance(node.pose, np.ndarray) else node.pose,
+                    "source_imgs": getattr(node, 'source_imgs', [])
                 }
                 for idx, node in self.nodes.items() if not node.movable
             },
@@ -626,7 +709,7 @@ class SceneGraph:
             if not isinstance(node, DrawerNode) and node.movable:
                 node_data = {
                     "id": node.object_id,
-                    "label": self.label_mapping.get(node.sem_label, "ID not found"),
+                    "label": node.sem_label,
                     "centroid": node.centroid.tolist() if isinstance(node.centroid, np.ndarray) else node.centroid,
                     "dimensions": node.dimensions.tolist() if isinstance(node.dimensions, np.ndarray) else node.dimensions,
                     "pose": node.pose.tolist() if isinstance(node.pose, np.ndarray) else node.pose,
@@ -655,7 +738,7 @@ class SceneGraph:
                 node_data = {
                     "id": node.object_id,
                     #"color": node.color.tolist() if isinstance(node.color, np.ndarray) else node.color,
-                    "label": self.label_mapping.get(node.sem_label, "ID not found"),
+                    "label": node.sem_label,
                     "centroid": node.centroid.tolist() if isinstance(node.centroid, np.ndarray) else node.centroid,
                     "dimensions": [node.dimensions[0], self.nodes[node.belongs_to].dimensions[1], node.dimensions[2]],
                     "equation": node.equation.tolist() if isinstance(node.equation, np.ndarray) else node.equation,
