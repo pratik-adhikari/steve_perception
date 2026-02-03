@@ -29,7 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'perception_node = steve_perception.perception_node:main',
-            'pan_tilt_control = steve_perception.utils.pan_tilt.control_node:main',
+
             'extract_scene_data = steve_perception.scene_graph.exporter:main',
             'generate_scene_graph = steve_perception.scene_graph.generator:main',
         ],
