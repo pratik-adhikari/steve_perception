@@ -167,7 +167,7 @@ def _launch_setup(context, *args, **kwargs):
         "frame_id": base_frame,
         "odom_frame_id": odom_frame,
         "map_frame_id": map_frame,
-        "publish_tf": True,
+        "publish_tf": False, # Disabled to avoid conflict with NAV2/AMCL
         "subscribe_rgbd": True,
         "subscribe_odom": True,
         "subscribe_scan": subscribe_scan,
@@ -192,7 +192,9 @@ def _launch_setup(context, *args, **kwargs):
             remappings=[
                 ("rgbd_image", pan_tilt_rgb_topic),
                 ("odom", "/odom"),
-                ("scan", scan_topic)
+                ("scan", scan_topic),
+                ("map", "/rtabmap/map"),       # Avoid conflict with Nav2 map
+                ("grid_map", "/rtabmap/grid_map"), # Avoid conflict with Nav2 costmaps
             ],
         )
     )
