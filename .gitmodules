@@ -1,16 +1,14 @@
 [submodule "source/models/lib/Mask3D"]
 	path = source/models/lib/Mask3D
-	url = git@github.com:behretj/Mask3D.git
+	url = https://github.com/pratik-adhikari/Mask3D.git
+	branch = dev
 
 [submodule "source/models/lib/OneFormer3D"]
 	path = source/models/lib/OneFormer3D
-	url = https://github.com/filaPro/oneformer3d.git
+	url = https://github.com/pratik-adhikari/oneformer3d.git
+	branch = dev
 
 [submodule "source/models/lib/OpenMask3D"]
 	path = source/models/lib/OpenMask3D
-	url = https://github.com/OpenMask3D/OpenMask3D
-
-[submodule "source/models/lib/OpenYOLO3D"]
-	path = source/models/lib/OpenYOLO3D
-	url = https://github.com/pratik-adhikari/OpenYOLO3D
-
+	url = https://github.com/pratik-adhikari/openmask3d.git
+	branch = dev
