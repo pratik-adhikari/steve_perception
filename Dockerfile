@@ -1,3 +1,7 @@
+# STEVE Perception: Scanner Environment
+# Base: ROS 2 Humble
+# Includes: rtabmap-ros, navigation2, open3d, scipy
+
 FROM osrf/ros:humble-desktop
 
 # Set environment
@@ -5,38 +9,26 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
 # System dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-rtabmap-ros \
+    ros-humble-navigation2 \
+    ros-humble-rmw-cyclonedds-cpp \
     python3-pip \
     python3-dev \
     git \
     wget \
     curl \
     vim \
-    unzip \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies for Steve Perception & OpenMask3D Client
+# Minimal Python dependencies for export scripts
 RUN pip3 install --no-cache-dir \
-    torch \
-    torchvision \
-    "numpy<2.0.0" \
-    scipy \
     open3d \
-    matplotlib \
-    pillow \
-    pyyaml \
-    ftfy \
-    regex \
+    scipy \
     tqdm
 
-# Install CLIP (OpenAI)
-RUN pip3 install git+https://github.com/openai/CLIP.git
+# Setup ROS environment
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
 
-# Install Steve Perception as a package (optional, or just mount it)
-# WORKDIR /ws/src/steve_perception
-# COPY . .
-# RUN pip3 install -e .
-
-WORKDIR /ws
+WORKDIR /root/ws
+CMD ["bash"]

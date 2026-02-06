@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # Scanner / Mapping Environment
+  # ----------------------------------------------------------------------------
+  mapping:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: steve_perception:mapping
+    network_mode: host
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /dev:/dev
+      - .:/root/ws/src/steve_perception
+    working_dir: /root/ws
+    command: bash
+
+  # graspnet:
+  #   image: registry.gitlab.uni-bonn.de:5050/rpl/public_registry/graspnet:v1.0
+  #   ports:
+  #     - "5000:5000"
+  #   stdin_open: true
+  #   tty: true
+  #   command: python3 app.py
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [ gpu ]
+
+  # vitpose:
+  #   image: craiden/vitpose:v1.0
+  #   ports:
+  #     - "5002:5002"
+  #   stdin_open: true
+  #   tty: true
+  #   working_dir: /home
+  #   command: /bin/bash -c "pip install flask opencv-python-headless ultralytics && python3 app.py"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [ gpu ]
+
+  openmask:
+    image: craiden/openmask:v1.0
+    ports:
+      - "5001:5001"
+    stdin_open: true
+    tty: true
+    command: python3 app.py
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  yolodrawer:
+    image: craiden/yolodrawer:v1.0
+    ports:
+      - "5004:5004"
+    stdin_open: true
+    tty: true
+    command: python3 app.py
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+  mask3d:
+    image: rupalsaxena/mask3d_docker:latest
+    privileged: true
+    volumes:
+      # Mount the workspace to access input data
+      - .:/home/ws/src/steve_perception
+    working_dir: /home/ws/src/steve_perception
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    command: sleep infinity
