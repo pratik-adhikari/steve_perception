@@ -13,10 +13,10 @@
 # ====================
 # Set ROS 2 logging levels for each component (debug, info, warn, error, fatal)
 logging:
-  default: info                  # Default level for all nodes
+  # default: info                  # Default level for all nodes
   steve_perception: info         # Perception node (CameraAgent) logging
   rgbd_odometry: warn            # Visual odometry node (set to warn to reduce clutter)
-  rtabmap: info                  # RTAB-Map SLAM node logging
+  rtabmap: warn                  # RTAB-Map SLAM node logging
   rtabmap_viz: warn              # Visualization node (set to warn to reduce clutter)
 
 # ====================
@@ -65,7 +65,7 @@ rtabmap:
   # List of synchronized RGBD topics produced by CameraAgent
   # Topic format: /steve_perception/<camera_name>/rgbd_image
   rgbd_topics:
-    - /steve_perception/front/rgbd_image          # Front camera RGBD topic
+    # - /steve_perception/front/rgbd_image          # Front camera RGBD topic
     - /steve_perception/pan_tilt/rgbd_image       # Pan-tilt camera RGBD topic (multi-camera)
 
   # ==== LiDAR/Laser Scan Integration ====
@@ -76,10 +76,10 @@ rtabmap:
   # If subscribe_scan=true, RTAB-Map will synchronize RGBD + scan.
   # If the scan is missing/slow/jittery, RTAB-Map will look "stalled" even though RGBD is publishing.
   # Enable this only after you confirm the scan is stable.
-  subscribe_scan: false
+  subscribe_scan: true
 
   # Topic name for 2D laser scan (sensor_msgs/LaserScan)
-  scan_topic: /lidar_1/scan
+  scan_topic: /lidar_2/scan
 
   # ==== Visual Odometry Settings ====
   # Empty string means don't use a separate odometry guess frame
