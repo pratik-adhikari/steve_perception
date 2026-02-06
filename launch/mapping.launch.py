@@ -1,43 +1,40 @@
-"""Launches PerceptionNode plus RTAB-Map mapping."""
+"""Launches PerceptionNode plus RTAB-Map mapping (single camera)."""
 
 from __future__ import annotations
 import os
-import re
 import yaml
 from pathlib import Path
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription, LogInfo
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, LogInfo
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 from launch_ros.actions import Node
+import shutil
+
+def _create_work_copy(src_path: str) -> str:
+    """Create a working copy of the INI file to prevent overwriting the source."""
+    if not os.path.exists(src_path):
+        return src_path
+
+    dirname, basename = os.path.split(src_path)
+    name, ext = os.path.splitext(basename)
+    dst_name = f"{name}_autosave{ext}"
+    dst_path = os.path.join(dirname, dst_name)
+    
+    try:
+        shutil.copy2(src_path, dst_path)
+        return dst_path
+    except Exception as e:
+        print(f"[mapping] Failed to create work-copy: {e}. Using original.")
+        return src_path
 
 def _load_yaml(path: str) -> dict:
     """Load YAML configuration file."""
     with open(path, "r") as f:
         return yaml.safe_load(f) or {}
 
-def _rgbd_remaps(rgbd_topics: list[str]) -> list[tuple[str, str]]:
-    """Build topic remapping rules for RTAB-Map RGBD inputs."""
-    if len(rgbd_topics) == 1:
-        return [("rgbd_image", rgbd_topics[0])]
-    return [(f"rgbd_image{i}", t) for i, t in enumerate(rgbd_topics)]
-
-def _rgbd_images_topic() -> str:
-    """Multi-camera RGBDImages topic for rgbdx_sync output."""
-    return "/steve_perception/rgbd_images"
-
-def _csv(cams: list[str]) -> str:
-    """Convert camera list to comma-separated string."""
-    return ",".join([c.strip() for c in cams if str(c).strip()])
-
-
 def _pkg_share_from_this_launch() -> str:
-    """Return `<pkg_share>/steve_perception` based on this launch file location.
-
-    Works both from source and from an installed package, because launch files
-    are installed under: `share/<pkg>/launch/`.
-    """
+    """Return package share directory based on this launch file location."""
     launch_dir = Path(__file__).resolve().parent
     return str(launch_dir.parent.resolve())
 
@@ -46,18 +43,15 @@ def _launch_setup(context, *args, **kwargs):
     cfg_path = LaunchConfiguration("mapping_config").perform(context)
     cfg = _load_yaml(cfg_path)
 
-    # Parse configuration sections
     perception_cfg = cfg.get("perception", {}) or {}
     rtab = cfg.get("rtabmap", {}) or {}
+    logging_cfg = cfg.get("logging", {}) or {}
 
     # Queue sizes
     topic_q = int(rtab.get("topic_queue_size", 30))
     sync_q = int(rtab.get("sync_queue_size", 30))
 
-    viz = cfg.get("viz", {}) or {}
-    logging_cfg = cfg.get("logging", {}) or {}
-
-    # Database directory setup
+    # Database setup
     output_dir = str(rtab.get("output_dir", "")).strip()
     if not output_dir:
         output_dir = os.path.join(os.path.expanduser("~"), ".ros", "steve_maps")
@@ -67,57 +61,48 @@ def _launch_setup(context, *args, **kwargs):
     database_name = str(rtab.get("database_name", "rtabmap.db")).strip()
     database_path = os.path.join(output_dir, database_name)
 
-    # TF frames and timing
+    # TF frames
     use_sim_time = bool(rtab.get("use_sim_time", True))
     base_frame = str(rtab.get("base_frame", "base_link"))
     odom_frame = str(rtab.get("odom_frame", "odom"))
     map_frame = str(rtab.get("map_frame", "map"))
     wait_for_transform = float(rtab.get("wait_for_transform", 0.2))
 
-    # RGBD topic configuration
+    # Single RGBD camera topic
     rgbd_topics = rtab.get("rgbd_topics", [])
-    rgbd_topics = [str(t) for t in rgbd_topics]
-    if not rgbd_topics:
-        rgbd_topics = [str(rtab.get("rgbd_topic", "/steve_perception/front/rgbd_image"))]
-    rgbd_topics = [str(t) for t in rgbd_topics]
+    if not rgbd_topics or len(rgbd_topics) == 0:
+        rgbd_topic = str(rtab.get("rgbd_topic", "/steve_perception/pan_tilt/rgbd_image"))
+    else:
+        rgbd_topic = str(rgbd_topics[0])  # Only use first camera
 
-    # Extract camera names from topics for perception node
-    cams: list[str] = []
-    pat = re.compile(r"^/steve_perception/([^/]+)/rgbd_image$")
-    for t in rgbd_topics:
-        m = pat.match(t)
-        if m:
-            cams.append(m.group(1))
-    publish_rgbd_cameras_csv = ",".join(cams)
-
-    # Multi-camera sync mode
-    rgbd_cameras = len(rgbd_topics)
-    use_rgbd_images_interface = rgbd_cameras > 1
-
+    # Lidar
     subscribe_scan = bool(rtab.get("subscribe_scan", False))
     scan_topic = str(rtab.get("scan_topic", "/scan"))
 
+    # INI file
     pkg_share = _pkg_share_from_this_launch()
-    ini_file = str(rtab.get("ini_file", "rtabmap_front_rgbd.ini"))
+    ini_file = str(rtab.get("ini_file", "rtabmap_rgbd.ini"))
     ini_path = os.path.join(pkg_share, "config", ini_file)
+    ini_path = _create_work_copy(ini_path)
 
-    # Logging levels per node
-    lvl_perception = str(logging_cfg.get("steve_perception", logging_cfg.get("perception_node", "info")))
-    lvl_odom = str(logging_cfg.get("rgbd_odometry", "info"))
-    lvl_rtabmap = str(logging_cfg.get("rtabmap", "info"))
+    # Logging levels
+    lvl_perception = str(logging_cfg.get("steve_perception", "info"))
+    lvl_odom = str(logging_cfg.get("rgbd_odometry", "warn"))
+    lvl_rtabmap = str(logging_cfg.get("rtabmap", "warn"))
     lvl_viz = str(logging_cfg.get("rtabmap_viz", "warn"))
 
-    # Perception node launch
-    perception_launch = os.path.join(pkg_share, "launch", "perception.launch.py")
+    # Perception config
     perception_config_file = str(perception_cfg.get("config_file", "steve.yaml"))
-    publish_rgbd_master = bool(perception_cfg.get("publish_rgbd", True))
+    publish_rgbd = bool(perception_cfg.get("publish_rgbd", True))
+    enabled_cameras = perception_cfg.get("enabled_cameras", ["pan_tilt"])
 
     actions = [
         LogInfo(msg=f"[steve_perception] Mapping YAML: {cfg_path}"),
         LogInfo(msg=f"[steve_perception] RTAB-Map DB: {database_path}"),
         LogInfo(msg=f"[steve_perception] RTAB-Map INI: {ini_path}"),
+        LogInfo(msg=f"[steve_perception] RGBD Topic: {rgbd_topic}"),
         
-        # Launch PerceptionNode (CameraAgents + optional RtabmapBridge)
+        # Perception Node
         Node(
             package="steve_perception",
             executable="perception_node",
@@ -127,113 +112,67 @@ def _launch_setup(context, *args, **kwargs):
             parameters=[{
                 "config_file": perception_config_file,
                 "use_sim_time": use_sim_time,
-                "publish_rgbd": publish_rgbd_master,
-                "enabled_cameras": cams,
+                "publish_rgbd": publish_rgbd,
+                "enabled_cameras": enabled_cameras,
             }],
         ),
-    ]
 
-    # Add rgbdx_sync for multi-camera setups
-    if use_rgbd_images_interface:
-        actions.append(
-            Node(
-                package="rtabmap_sync",
-                executable="rgbdx_sync",
-                name="rgbdx_sync",
-                output="screen",
-                arguments=["--ros-args", "--log-level", logging_cfg.get("rgbdx_sync", "warn")],
-                parameters=[{
-                    "approx_sync": True,
-                    "sync_queue_size": sync_q,
-                    "topic_queue_size": topic_q,
-                    "use_sim_time": use_sim_time,
-                }],
-                remappings=_rgbd_remaps(rgbd_topics) + [("rgbd_images", _rgbd_images_topic())],
-            )
-        )
-
-    # Visual odometry configuration
-    odom_params = {
-        "use_sim_time": use_sim_time,
-        "frame_id": base_frame,
-        "odom_frame_id": odom_frame,
-        "publish_tf": False,
-        "subscribe_rgbd": True,
-        "approx_sync": True,
-        "sync_queue_size": sync_q,
-        "topic_queue_size": topic_q,
-        "wait_for_transform": wait_for_transform,
-    }
-    odom_rgbd_topic = rgbd_topics[0]
-
-    actions.append(
+        # Visual Odometry
         Node(
             package="rtabmap_odom",
             executable="rgbd_odometry",
             name="rgbd_odometry",
             output="screen",
             arguments=["--ros-args", "--log-level", lvl_odom],
-            parameters=[odom_params],
-            remappings=[("rgbd_image", odom_rgbd_topic), ("odom", "/odom")],
-        )
-    )
+            parameters=[{
+                "use_sim_time": use_sim_time,
+                "frame_id": base_frame,
+                "odom_frame_id": odom_frame,
+                "publish_tf": False,
+                "subscribe_rgbd": True,
+                "approx_sync": True,
+                "sync_queue_size": sync_q,
+                "topic_queue_size": topic_q,
+                "wait_for_transform": wait_for_transform,
+            }],
+            remappings=[
+                ("rgbd_image", rgbd_topic),
+                ("odom", "/odom"),
+            ],
+        ),
 
-    # RTAB-Map SLAM configuration
-    slam_params = {
-        "use_sim_time": use_sim_time,
-        "frame_id": base_frame,
-        "odom_frame_id": odom_frame,
-        "map_frame_id": map_frame,
-        "publish_tf": True,
-        "subscribe_rgbd": True,
-        "subscribe_odom": True,
-        "subscribe_scan": subscribe_scan,
-        "approx_sync": True,
-        "sync_queue_size": sync_q,
-        "topic_queue_size": topic_q,
-        "wait_for_transform": wait_for_transform,
-        "config_path": ini_path,
-        "database_path": database_path,
-        "delete_db_on_start": LaunchConfiguration("delete_db_on_start"),
-    }
-
-    if use_rgbd_images_interface:
-        slam_params["rgbd_cameras"] = 0
-    elif rgbd_cameras > 1:
-        slam_params["rgbd_cameras"] = rgbd_cameras
-
-    actions.append(
+        # RTAB-Map SLAM
         Node(
             package="rtabmap_slam",
             executable="rtabmap",
             name="rtabmap",
             output="screen",
             arguments=["--ros-args", "--log-level", lvl_rtabmap],
-            parameters=[slam_params],
-            remappings=(
-                ([('rgbd_images', _rgbd_images_topic())] if use_rgbd_images_interface else _rgbd_remaps(rgbd_topics))
-                + [("odom", "/odom"), ("scan", scan_topic)]
-            ),
-        )
-    )
+            parameters=[{
+                "use_sim_time": use_sim_time,
+                "frame_id": base_frame,
+                "odom_frame_id": odom_frame,
+                "map_frame_id": map_frame,
+                "publish_tf": True,
+                "subscribe_rgbd": True,
+                "subscribe_odom": True,
+                "subscribe_scan": subscribe_scan,
+                "approx_sync": True,
+                "sync_queue_size": sync_q,
+                "topic_queue_size": topic_q,
+                "wait_for_transform": wait_for_transform,
+                "config_path": ini_path,
+                "database_path": database_path,
+                "delete_db_on_start": LaunchConfiguration("delete_db_on_start"),
+            }],
+            remappings=[
+                ("rgbd_image", rgbd_topic),
+                ("odom", "/odom"),
+                ("scan", scan_topic),
+            ],
+        ),
 
-    # Visualization node configuration
-    viz_params = {
-        "use_sim_time": use_sim_time,
-        "frame_id": base_frame,
-        "odom_frame_id": odom_frame,
-        "subscribe_rgbd": True,
-        "subscribe_odom_info": True,
-        "approx_sync": True,
-        "sync_queue_size": sync_q,
-    }
-
-    if use_rgbd_images_interface:
-        viz_params["rgbd_cameras"] = 0
-    elif rgbd_cameras > 1:
-        viz_params["rgbd_cameras"] = rgbd_cameras
-
-    actions.append(
+        # Visualization
         Node(
             condition=IfCondition(LaunchConfiguration("rtabmap_viz")),
             package="rtabmap_viz",
@@ -241,30 +180,22 @@ def _launch_setup(context, *args, **kwargs):
             name="rtabmap_viz",
             output="screen",
             arguments=["--ros-args", "--log-level", lvl_viz],
-            parameters=[viz_params],
-            remappings=(
-                ([('rgbd_images', _rgbd_images_topic())] if use_rgbd_images_interface else _rgbd_remaps(rgbd_topics))
-                + [("odom", "/odom"), ("scan", scan_topic)]
-            ),
-        )
-    )
-
-    # Pan-Tilt Control
-    actions.append(
-        Node(
-            condition=IfCondition(LaunchConfiguration("enable_pan_tilt")),
-            package="steve_perception",
-            executable="pan_tilt_control",
-            name="pan_tilt_control",
-            output="screen",
             parameters=[{
-                "pan": LaunchConfiguration("pan_tilt_pan"),
-                "tilt": LaunchConfiguration("pan_tilt_tilt"),
-                "speed": LaunchConfiguration("pan_tilt_speed"),
-                "sweep": LaunchConfiguration("pan_tilt_sweep")
-            }]
-        )
-    )
+                "use_sim_time": use_sim_time,
+                "frame_id": base_frame,
+                "odom_frame_id": odom_frame,
+                "subscribe_rgbd": True,
+                "subscribe_odom_info": True,
+                "approx_sync": True,
+                "sync_queue_size": sync_q,
+            }],
+            remappings=[
+                ("rgbd_image", rgbd_topic),
+                ("odom", "/odom"),
+                ("scan", scan_topic),
+            ],
+        ),
+    ]
 
     return actions
 
@@ -286,7 +217,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "mapping_config",
             default_value=default_cfg,
-            description="Path to a mapping_*.yaml profile (steve_perception/config).",
+            description="Path to mapping YAML config (steve_perception/config).",
         ),
         DeclareLaunchArgument(
             "delete_db_on_start",
@@ -297,31 +228,6 @@ def generate_launch_description():
             "rtabmap_viz",
             default_value=viz_default,
             description="Launch rtabmap_viz.",
-        ),
-        DeclareLaunchArgument(
-            "enable_pan_tilt",
-            default_value="true",
-            description="Enable Pan-Tilt controller node.",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_pan",
-            default_value="0.0",
-            description="Pan amplitude/angle (deg).",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_tilt",
-            default_value="0.0",
-            description="Tilt amplitude/angle (deg).",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_speed",
-            default_value="10.0",
-            description="Pan-Tilt speed (deg/s).",
-        ),
-        DeclareLaunchArgument(
-            "pan_tilt_sweep",
-            default_value="false",
-            description="Enable sweep mode.",
         ),
         OpaqueFunction(function=_launch_setup),
     ])
