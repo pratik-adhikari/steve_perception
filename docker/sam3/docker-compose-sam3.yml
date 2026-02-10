@@ -1,0 +1,38 @@
+# SAM3 Docker Compose - Real SAM3 with Text Prompting
+
+services:
+  sam3:
+    build:
+      context: .
+      dockerfile: Dockerfile.sam3
+      args:
+        HF_TOKEN: ${HF_TOKEN}
+    container_name: sam3_server
+    ports:
+      - "5005:5005"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      # Mount for caching model weights
+      - sam3_cache:/root/.cache
+      # Use updated app.py
+      - ./app_sam3.py:/app/app.py
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5005/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s # SAM3 takes longer to load
+
+volumes:
+  sam3_cache:

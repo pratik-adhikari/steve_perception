@@ -32,6 +32,8 @@ setup(
 
             'extract_scene_data = steve_perception.scene_graph.exporter:main',
             'generate_scene_graph = steve_perception.scene_graph.generator:main',
+            
+            'sam3_detector = steve_perception.sam3_detector_node:main',
         ],
     },
 )

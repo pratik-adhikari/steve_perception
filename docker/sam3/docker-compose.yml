@@ -1,0 +1,38 @@
+# SAM3 Docker Compose Configuration
+# Usage: docker compose up --build
+
+services:
+  sam3:
+    build:
+      context: ../.. # Build from steve_perception root to access sam3
+      dockerfile: docker/sam3/Dockerfile
+      args:
+        HF_TOKEN: ${HF_TOKEN}
+    container_name: sam3_server
+    privileged: true
+    ports:
+      - "5005:5005"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      # Mount for caching model weights between runs
+      - sam3_cache:/root/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5005/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+volumes:
+  sam3_cache:

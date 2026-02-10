@@ -1,0 +1,56 @@
+# SAM3 Docker Server for Steve Robot
+# Provides object detection and instance segmentation via REST API
+
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    python3-dev \
+    git \
+    wget \
+    curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
+RUN pip3 install --no-cache-dir \
+    torch==2.5.1 \
+    torchvision==0.20.1 \
+    numpy==1.24.4 \
+    opencv-python==4.10.0.84 \
+    pillow==11.0.0 \
+    flask==3.0.0 \
+    gunicorn==21.2.0 \
+    scipy==1.11.4 \
+    matplotlib==3.8.0 \
+    hydra-core==1.3.2 \
+    iopath==0.1.10
+
+# Install SAM2 (which includes SAM 2.1 - the latest version)
+WORKDIR /app
+RUN git clone https://github.com/facebookresearch/sam2.git && \
+    cd sam2 && \
+    pip install -e .
+
+# Download SAM2.1 Hiera Large checkpoint
+RUN mkdir -p /app/sam2/checkpoints && \
+    cd /app/sam2/checkpoints && \
+    wget -q https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
+
+# Copy server application
+WORKDIR /app
+COPY app.py /app/app.py
+
+# Expose port
+EXPOSE 5005
+
+# Run server
+CMD ["python3", "app.py"]
