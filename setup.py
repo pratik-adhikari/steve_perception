@@ -9,6 +9,11 @@ setup(
     name=package_name,
     version='1.0.0',
     packages=find_packages(exclude=['test']),
+    # VGN weights and the vendored library's license ship inside the Python package
+    package_data={
+        'steve_perception.vgn': ['models/*.pth', 'README.md'],
+        'steve_perception.vgn.third_party.vgn': ['LICENSE'],
+    },
     # Install data files for ROS 2
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
