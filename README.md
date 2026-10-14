@@ -91,6 +91,22 @@ python3 source/scripts/build_scene_graph.py --input data/pipeline_output/combine
 
 ---
 
+## 4. Grasp detection
+
+* **VGN** (`steve_perception/vgn/`): TSDF from depth views → 6-DOF grasps, used by
+  `steve_wbc` ([README](steve_perception/vgn/README.md), `vgn_env` setup).
+* **Hand-held grasp test** (`steve_perception/grasp_test/`): a USB RealSense (D415 / D435i) in
+  your hand plays the wrist camera; snapshot → VGN or Contact-GraspNet (DiNBV-Grasp's server
+  protocol) → grasp in the robot's `odom` → 9-DOF WBC trajectory, live in RViz
+  ([README](steve_perception/grasp_test/README.md)):
+
+```bash
+ros2 launch steve_perception grasp_test_rviz.launch.py
+ros2 run steve_perception handheld_grasp_test --live
+```
+
+---
+
 ## Documentation
 - [**Pipeline Details**](docs/PIPELINE_USAGE.md)
 - [**Technical Architecture**](docs/TECHNICAL_DETAILS.md)

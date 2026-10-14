@@ -20,6 +20,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml') + glob('config/*.ini')),
+        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
         (os.path.join('share', package_name, 'data'), glob('data/*.csv')),
     ],
     install_requires=['setuptools'],
@@ -39,6 +40,8 @@ setup(
             'generate_scene_graph = steve_perception.scene_graph.generator:main',
             
             'sam3_detector = steve_perception.sam3_detector_node:main',
+
+            'handheld_grasp_test = steve_perception.grasp_test.handheld_grasp_test:main',
         ],
     },
 )
