@@ -240,6 +240,12 @@ class VGNBridge:
         TSDF drawn in, the chosen one green, + npz per view (run_record.save_scan). MuJoCo views
         (no intrinsics) are skipped."""
         from steve_perception.utils.run_record import save_scan
+        views, grasps, name = self.scan_data()
+        if views:
+            save_scan(folder, scan_no, views, grasps, best, name)
+
+    def scan_data(self):
+        """(views, grasps, name) of the last scan in run_record.save_scan's format (world frame)."""
         views = []
         for v in self._views:
             if "intr" not in v:
@@ -247,12 +253,10 @@ class VGNBridge:
             fx, fy, cx, cy = v["intr"]
             views.append({"depth": v["depth"], "rgb": v.get("rgb"), "K": np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
                           "R": v["cam_mat"].reshape(3, 3), "t": v["cam_pos"]})
-        if not views:
-            return
         grasps = [] if self._tsdf_origin is None else [
             (self._tsdf_origin + np.asarray(c["pos_tsdf"]), np.asarray(c["rot_flat"]).reshape(3, 3),
              float(c["width_m"]), float(c["score"])) for c in getattr(self, "_candidates", [])]
-        save_scan(folder, scan_no, views, grasps, best, "VGN")
+        return views, grasps, "VGN"
 
     # ── Environment health check (runs in the background) ────────────────────
     # vgn_env must import torch + open3d and exchange arrays with NumPy; a broken env

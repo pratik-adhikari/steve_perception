@@ -24,7 +24,7 @@ Public API (as used by steve_wbc's RosWorld)
     .add_real_view(depth, cam_pos, R_world_optical, K, center, rgb) -> view count
     .start_inference() + .poll_inference() | .run_inference()
     .best_grasp_world(near, xy_radius, z_window) -> (pos, R, width, score) | None
-    .save_scan(folder, scan_no, best)        views with target mask + grasps as images / npz
+    .scan_data() / .save_scan(folder, scan_no, best)   views with target mask + grasps as images / npz
 """
 
 import threading
@@ -234,5 +234,9 @@ class CGNBridge:
                   f"{'best on the target: score %.3f' % best[3] if best else 'none on the target'}")
         return best
 
+    def scan_data(self):
+        """(views, grasps, name) of the last scan, for run_record.save_scan."""
+        return self._views, self._grasps, "Contact-GraspNet"
+
     def save_scan(self, folder, scan_no, best):
-        save_scan(folder, scan_no, self._views, self._grasps, best, "Contact-GraspNet")
+        save_scan(folder, scan_no, *self.scan_data()[:2], best, "Contact-GraspNet")
