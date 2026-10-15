@@ -264,20 +264,71 @@ class VGNBridge:
     # the macOS loader rejects under Rosetta) otherwise errors out or hangs at inference.
     _HEALTH_CHECK = "import numpy, torch, open3d; torch.from_numpy(numpy.zeros(3)); print('VGN_ENV_OK')"
 
-    def start_health_check(self) -> None:
+    def start_health_check(self, persistent: bool = True) -> None:
+        """Check vgn_env in the background. persistent (robot): the check IS a persistent worker
+        (worker.py --serve) that loads torch + the network now, while the robot drives, and then
+        answers each inference in ~0.1-0.3 s instead of a new process per call (~4-7 s)."""
         self._health, self.health_msg = None, ""
         if not self.available:
             return
-        self._health = subprocess.Popen(_vgn_cmd("-c", self._HEALTH_CHECK), env=_vgn_env(),
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self._health_t0 = time.monotonic()
+        if not persistent:
+            self._health = subprocess.Popen(_vgn_cmd("-c", self._HEALTH_CHECK), env=_vgn_env(),
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return
+        import collections
+        import queue
+        import threading
+        try:
+            srv = subprocess.Popen(_vgn_cmd(str(_WORKER_PATH), "--serve", str(self.model_path), str(_VGN_SRC)),
+                                   env=_vgn_env(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, bufsize=1)
+        except OSError as exc:
+            self.available, self.health_msg = False, f"cannot start the VGN worker: {exc}"
+            return
+        self._srv, self._srv_out, self._srv_err = srv, queue.Queue(), collections.deque(maxlen=40)
+        threading.Thread(target=lambda: [self._srv_out.put(l) for l in srv.stdout], daemon=True).start()
+        threading.Thread(target=lambda: [self._srv_err.append(l) for l in srv.stderr], daemon=True).start()
+        self._health = srv
+        import atexit
+        atexit.register(self.close)
+
+    def close(self) -> None:
+        """Stop the persistent worker (if any)."""
+        srv, self._srv = getattr(self, "_srv", None), None
+        if srv is not None and srv.poll() is None:
+            srv.terminate()
+            try:
+                srv.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                srv.kill()
+
+    def _server_ready(self) -> bool:
+        srv = getattr(self, "_srv", None)
+        return srv is not None and srv.poll() is None and getattr(self, "_srv_ready", False)
 
     def health(self, timeout: float = 120.0) -> Optional[bool]:
         """True/False once the check is done, None while it is still running."""
         p = getattr(self, "_health", None)
         if p is None:
             return self.available
-        if p.poll() is None:
+        if p is getattr(self, "_srv", None):  # persistent worker: "READY" once the network is loaded
+            import queue
+            try:
+                line = self._srv_out.get_nowait()
+            except queue.Empty:
+                line = None
+            if line is not None and line.strip() == "READY":
+                ok, self._srv_ready = True, True
+                print(f"  [VGN] persistent worker ready ({time.monotonic() - self._health_t0:.1f} s)")
+            elif p.poll() is None and time.monotonic() - self._health_t0 < timeout:
+                return None
+            else:
+                ok = False
+                self.health_msg = (f"environment check timed out after {timeout:.0f} s" if p.poll() is None else
+                                   ((list(self._srv_err) or [f"exit code {p.returncode}"])[-1].strip()[:300]))
+                self.close()
+        elif p.poll() is None:
             if time.monotonic() - self._health_t0 < timeout:
                 return None
             p.kill()
@@ -313,7 +364,18 @@ class VGNBridge:
                 npz_data[f"intr_{i}"] = v["intr"]
         with tempfile.NamedTemporaryFile(suffix=".npz", delete=False, prefix="vgn_views_") as nf:
             self._npz_path = nf.name
-        np.savez_compressed(self._npz_path, **npz_data)
+        np.savez(self._npz_path, **npz_data)  # uncompressed: read back at once by the worker
+        if self._server_ready():
+            import json as _json
+            try:
+                self._srv.stdin.write(_json.dumps({"npz": self._npz_path, "tsdf_size": self.tsdf_size,
+                                                   "tsdf_res": self.tsdf_resolution}) + "\n")
+                self._srv.stdin.flush()
+                self._srv_pending, self._proc_t0 = True, time.monotonic()
+                return True
+            except (OSError, ValueError) as exc:
+                print(f"  [VGN] persistent worker gone ({exc}) -> one process per inference")
+                self.close()
         try:
             self._proc = subprocess.Popen(
                 _vgn_cmd(str(_WORKER_PATH), self._npz_path, str(self.model_path),
@@ -328,6 +390,23 @@ class VGNBridge:
 
     def poll_inference(self, timeout: float = 30.0) -> Optional[bool]:
         """None while running; True if a grasp was found, False on failure/timeout."""
+        if getattr(self, "_srv_pending", False):
+            import queue
+            try:
+                line = self._srv_out.get_nowait()
+            except queue.Empty:
+                if self._srv is not None and self._srv.poll() is None and time.monotonic() - self._proc_t0 < timeout:
+                    return None
+                # died or too slow: a late answer would belong to the wrong request -> drop the worker
+                print(f"  [VGN] persistent worker {'timed out' if self._srv and self._srv.poll() is None else 'died'}"
+                      f": {''.join(list(self._srv_err)[-3:]).strip()[-300:]}")
+                self.close()
+                self._srv_pending = False
+                self._cleanup()
+                return False
+            self._srv_pending = False
+            self._cleanup()
+            return self._parse_result(0, line, "".join(self._srv_err))
         p = getattr(self, "_proc", None)
         if p is None:
             return False

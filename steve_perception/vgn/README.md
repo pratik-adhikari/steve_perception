@@ -48,6 +48,10 @@ The interpreter is found at `~/{anaconda3,miniconda3}/envs/vgn_env/bin/python3`;
 
 ## Usage
 
+Each inference starts `worker.py` in `vgn_env` (~4–7 s: interpreter, torch, network). The robot
+WBC calls `start_health_check()` instead, which keeps one worker running (`worker.py --serve`,
+loaded and warmed up in ~3 s): ~0.1 s per inference afterwards. `close()` stops it.
+
 ```python
 from steve_perception.vgn import VGNBridge
 

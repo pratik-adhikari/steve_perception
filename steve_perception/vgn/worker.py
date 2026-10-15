@@ -6,7 +6,11 @@ Standalone VGN inference worker — must be run under vgn_env Python 3.10.
 Imports only the vendored VGN library (third_party/vgn), never ROS.
 
 Usage (called by bridge.py via subprocess):
-  python3 worker.py <data.npz> <model.pth> <tsdf_size> <tsdf_res> <vgn_src>
+  python3 worker.py <data.npz> <model.pth> <tsdf_size> <tsdf_res> <vgn_src>     one inference, exit
+  python3 worker.py --serve <model.pth> <vgn_src>                                 persistent
+      loads torch + the network once, prints "READY", then per stdin line
+      {"npz": path, "tsdf_size": m, "tsdf_res": n} one JSON result line. A one-shot call spends
+      ~4-7 s on interpreter start, imports and model load; the network itself takes ~10 ms.
 
 Input npz keys
 --------------
@@ -32,27 +36,27 @@ import numpy as np
 from pathlib import Path
 
 
-def main():
-    npz_path   = sys.argv[1]
-    model_path = sys.argv[2]
-    tsdf_size  = float(sys.argv[3])
-    tsdf_res   = int(sys.argv[4])
-    vgn_src    = sys.argv[5]
-
+def load(model_path, vgn_src):
+    """torch, the vendored VGN library and the network (the slow part of a one-shot call)."""
     # Add the vendored VGN library to the path (the ROS 1 vis / ros_utils modules are not
     # vendored, so nothing here imports ROS)
     if vgn_src not in sys.path:
         sys.path.insert(0, vgn_src)
 
     import torch
+    from vgn.networks import load_network
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return load_network(Path(model_path), device), device
+
+
+def infer(npz_path, tsdf_size, tsdf_res, net, device):
+    """TSDF of the npz's views -> VGN -> result dict (see the module doc)."""
     from vgn.detection import predict, process, select
     from vgn.perception import TSDFVolume, CameraIntrinsic
     from vgn.grasp import from_voxel_coordinates
-    from vgn.networks import load_network
     from vgn.utils.transform import Transform
 
-    device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net        = load_network(Path(model_path), device)
     voxel_size = tsdf_size / tsdf_res
 
     data       = np.load(npz_path, allow_pickle=False)
@@ -102,16 +106,13 @@ def main():
     grasps, scores   = select(qual.copy(), rot, width)
 
     if len(grasps) == 0:
-        print(json.dumps({
-            "found": False, "n_candidates": 0, "error": None,
-        }))
-        return
+        return {"found": False, "n_candidates": 0, "error": None}
 
     grasps_m = [from_voxel_coordinates(g, voxel_size) for g in grasps]
     best     = int(np.argmax(scores))
     g        = grasps_m[best]
 
-    print(json.dumps({
+    return {
         "found":        True,
         "pos_tsdf":     g.pose.translation.tolist(),
         "rot_flat":     g.pose.rotation.as_matrix().flatten().tolist(),
@@ -124,7 +125,36 @@ def main():
                           "width_m": float(gm.width), "score": float(sc)}
                          for gm, sc in zip(grasps_m, scores)],
         "error":        None,
-    }))
+    }
+
+
+def serve(model_path, vgn_src):
+    import traceback
+    net, device = load(model_path, vgn_src)
+    # warm-up (lazy imports, CUDA kernels: the first real call would take ~1.5 s instead of ~0.1 s)
+    from vgn.detection import predict, process, select  # noqa: F401
+    from vgn.perception import TSDFVolume
+    import open3d  # noqa: F401
+    grid = TSDFVolume(0.3, 40).get_grid()
+    predict(grid, net, device)
+    print("READY", flush=True)
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            req = json.loads(line)
+            res = infer(req["npz"], float(req["tsdf_size"]), int(req["tsdf_res"]), net, device)
+        except Exception:
+            res = {"found": False, "n_candidates": 0, "error": traceback.format_exc()}
+        print(json.dumps(res), flush=True)
+
+
+def main():
+    if sys.argv[1] == "--serve":
+        serve(sys.argv[2], sys.argv[3])
+        return
+    net, device = load(sys.argv[2], sys.argv[5])
+    print(json.dumps(infer(sys.argv[1], float(sys.argv[3]), int(sys.argv[4]), net, device)))
 
 
 if __name__ == "__main__":
