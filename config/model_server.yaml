@@ -1,0 +1,17 @@
+# Perception model servers: ros2 run steve_perception model_server gsam|cgn
+# (steve_perception/model_server/README.md). One process per model, each in its own conda env
+# (env files: steve_perception/model_server/envs/). Model code and weights live outside the
+# package, in the workspace's perception_tests/ (COLCON_IGNORE, not in git). Paths: ~ is expanded.
+gsam:                      # GroundingDINO + SAM: text prompt -> object masks
+  env: gsam_env            # conda env name, or the path of a python interpreter
+  bind: tcp://127.0.0.1:5556
+  gdino_repo: ~/steve_ros2_ws/perception_tests/GroundingDINO
+  gdino_weights: ~/steve_ros2_ws/perception_tests/weights/groundingdino_swint_ogc.pth
+  gdino_image_size: 480    # shorter image side fed to GroundingDINO: the camera's (480 for 640x480), not upscaled
+  sam_repo: ~/steve_ros2_ws/perception_tests/segment-anything
+  sam_weights: ~/steve_ros2_ws/perception_tests/weights/sam_vit_b_01ec64.pth
+  sam_type: vit_b
+cgn:                       # Contact-GraspNet (PyTorch port): depth + target mask -> 6-DOF grasps
+  env: cgn_env
+  bind: tcp://127.0.0.1:5555   # DiNBV-Grasp's port: grasp_test/cgn_client.py talks to it as well
+  cgn_repo: ~/steve_ros2_ws/perception_tests/contact_graspnet_pytorch

@@ -162,6 +162,7 @@ class VGNBridge:
         half = self.tsdf_size / 2.0
         self._tsdf_origin = box_approx_pos.copy() - np.array([half, half, half])
         self._views = []
+        self._candidates = []
         self._grasp_pos_tsdf = None
         self._grasp_rot = None
         self._grasp_width = 0.0
@@ -218,9 +219,10 @@ class VGNBridge:
         return len(self._views)
 
     def add_real_view(self, depth: np.ndarray, cam_pos: np.ndarray, R_world_optical: np.ndarray,
-                      K: np.ndarray, center_approx: np.ndarray) -> int:
+                      K: np.ndarray, center_approx: np.ndarray, rgb: Optional[np.ndarray] = None) -> int:
         """A real depth image (metres, 0 = invalid) with its camera pose: position and
-        world<-ROS optical frame rotation (from TF) and the 3x3 intrinsic matrix."""
+        world<-ROS optical frame rotation (from TF) and the 3x3 intrinsic matrix.
+        rgb: not used by VGN (depth only); kept for the saved scan images (save_scan)."""
         if not self.available:
             return 0
         if self._tsdf_origin is None:
@@ -230,8 +232,27 @@ class VGNBridge:
         self._views.append({"depth": d, "cam_pos": np.asarray(cam_pos, float),
                             "cam_mat": np.asarray(R_world_optical, float).flatten(),
                             "img_h": d.shape[0], "img_w": d.shape[1], "fovy": 0.0,
-                            "intr": np.array([K[0, 0], K[1, 1], K[0, 2], K[1, 2]], float)})
+                            "intr": np.array([K[0, 0], K[1, 1], K[0, 2], K[1, 2]], float), "rgb": rgb})
         return len(self._views)
+
+    def save_scan(self, folder, scan_no, best) -> None:
+        """Real views (colour image if given, else the depth) with all grasp candidates of the fused
+        TSDF drawn in, the chosen one green, + npz per view (run_record.save_scan). MuJoCo views
+        (no intrinsics) are skipped."""
+        from steve_perception.utils.run_record import save_scan
+        views = []
+        for v in self._views:
+            if "intr" not in v:
+                continue
+            fx, fy, cx, cy = v["intr"]
+            views.append({"depth": v["depth"], "rgb": v.get("rgb"), "K": np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
+                          "R": v["cam_mat"].reshape(3, 3), "t": v["cam_pos"]})
+        if not views:
+            return
+        grasps = [] if self._tsdf_origin is None else [
+            (self._tsdf_origin + np.asarray(c["pos_tsdf"]), np.asarray(c["rot_flat"]).reshape(3, 3),
+             float(c["width_m"]), float(c["score"])) for c in getattr(self, "_candidates", [])]
+        save_scan(folder, scan_no, views, grasps, best, "VGN")
 
     # ── Environment health check (runs in the background) ────────────────────
     # vgn_env must import torch + open3d and exchange arrays with NumPy; a broken env

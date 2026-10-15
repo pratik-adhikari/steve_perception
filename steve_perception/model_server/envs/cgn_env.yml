@@ -1,0 +1,20 @@
+# Contact-GraspNet (PyTorch port, elchun/contact_graspnet_pytorch) for steve_perception's
+# model_server (cgn). The repo with its checkpoint is external (config/model_server.yaml).
+#   PYTHONNOUSERSITE=1 conda env create -f cgn_env.yml
+# (PYTHONNOUSERSITE: pip must not count packages in ~/.local as installed)
+name: cgn_env
+channels: [conda-forge]
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch==2.5.1
+      - numpy==1.26.4
+      - scipy
+      - trimesh
+      - tqdm
+      - pyyaml
+      - pillow
+      - pyzmq
+      - opencv-python-headless==4.10.0.84

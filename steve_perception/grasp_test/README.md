@@ -104,9 +104,9 @@ GPU, so a persistent worker would make it real-time.
 **Contact-GraspNet / DiNBV** (`--backend cgn`): speaks DiNBV-Grasp's ZMQ protocol
 (`grasp_executor.py`: pickled `{depth, K, segmap, rgb, z_range, forward_passes}` →
 `{pred_grasps_cam, scores, contact_pts}`). The object mask from the plane segmentation is sent
-as `segmap`. Needs `pip install pyzmq` and a running `graspnet_server.py` on port 5555.
-That server is **not part of either repo** (DiNBV calls an external one), so it has to be
-written around a Contact-GraspNet install, e.g. the PyTorch port.
+as `segmap`. The server is steve_perception's `cgn` model server (Contact-GraspNet PyTorch port in
+`cgn_env`, port 5555): `ros2 run steve_perception model_server cgn`, see
+[`model_server/README.md`](../model_server/README.md).
 
 The rest of DiNBV (Stage I view selection: VGGT + distilled student; Stage II distance scorer)
 cannot run here. Its `student_nbv/best.pt` and `local_distance_scorer/best.pt` checkpoints are

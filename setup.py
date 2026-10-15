@@ -13,6 +13,8 @@ setup(
     package_data={
         'steve_perception.vgn': ['models/*.pth', 'README.md'],
         'steve_perception.vgn.third_party.vgn': ['LICENSE'],
+        # conda env files of the model servers (GroundingDINO + SAM, Contact-GraspNet)
+        'steve_perception.model_server': ['envs/*.yml', 'README.md'],
     },
     # Install data files for ROS 2
     data_files=[
@@ -42,6 +44,11 @@ setup(
             'sam3_detector = steve_perception.sam3_detector_node:main',
 
             'handheld_grasp_test = steve_perception.grasp_test.handheld_grasp_test:main',
+
+            # GPU models in their own conda envs (model_server/README.md) + the target detector using them
+            'model_server = steve_perception.model_server.launcher:main',
+            'gsam_target_detector = steve_perception.gsam_target_detector:main',
+            'perception_selftest = steve_perception.model_server.selftest:main',
         ],
     },
 )
