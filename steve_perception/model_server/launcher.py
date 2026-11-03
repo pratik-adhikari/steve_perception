@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-launcher.py — `ros2 run steve_perception model_server gsam|cgn [--config FILE] [server options]`
+launcher.py — `ros2 run steve_perception model_server gsam|cgn|dgn2 [--config FILE] [server options]`
 
 Runs server.py with the interpreter of the model's conda env (config/model_server.yaml), replacing
 this process (exec), so ros2 launch's SIGINT/SIGTERM reach the server directly. The ROS 2
@@ -46,8 +46,8 @@ def env_python(env):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     argv = argv[:argv.index("--ros-args")] if "--ros-args" in argv else argv  # added by ros2 launch
-    if not argv or argv[0] not in ("gsam", "cgn"):
-        sys.exit("usage: ros2 run steve_perception model_server gsam|cgn [--config FILE] [server options]")
+    if not argv or argv[0] not in ("gsam", "cgn", "dgn2"):
+        sys.exit("usage: ros2 run steve_perception model_server gsam|cgn|dgn2 [--config FILE] [server options]")
     model, rest = argv[0], argv[1:]
     cfg_arg = None
     if "--config" in rest:
@@ -69,8 +69,10 @@ def main(argv=None):
     env.pop("PYTHONPATH", None)
     env["PYTHONNOUSERSITE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
-    # less memory held by the CUDA caching allocator between requests (two servers share 8 GB)
-    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # less memory held by the CUDA caching allocator between requests (two servers share 8 GB) — PyTorch >= 2.1 only:
+    # dgn2_env's torch 2.0.1 stops at the first CUDA use with "Unrecognized CachingAllocator option"
+    if model != "dgn2":
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     print(f"[model_server] {model}: {py} ({path.name})", flush=True)
     os.execve(str(py), args, env)
 

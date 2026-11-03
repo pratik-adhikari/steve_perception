@@ -5,6 +5,7 @@ Started by `ros2 run steve_perception model_server <model>` (launcher.py), each 
 
   gsam : GroundingDINO + SAM   text prompt -> instance masks       gsam_env   tcp://127.0.0.1:5556
   cgn  : Contact-GraspNet      depth (+ target segment) -> grasps  cgn_env    tcp://127.0.0.1:5555
+  dgn2 : DexGraspNet 2.0       depth (+ area mask) -> LEAP grasps  dgn2_env   tcp://127.0.0.1:5557
 
 ZMQ REP, pickled dicts (cgn: the protocol of DiNBV-Grasp's graspnet_server, extended by "op"):
   {"op": "ping"}                                    -> {"model": "gsam" | "cgn"}
@@ -12,6 +13,8 @@ ZMQ REP, pickled dicts (cgn: the protocol of DiNBV-Grasp's graspnet_server, exte
                                                     -> {"detections": [{box, score, phrase, mask}]}
   cgn  {"op": "grasp" (or no op), "depth", "K", ["segmap", "z_range", "forward_passes",
         "local_regions", "filter_grasps"]}          -> {pred_grasps_cam, scores, contact_pts, gripper_openings}
+  dgn2 {"op": "dexgrasp", "depth", "K", ["mask", "z_range", "n_seeds", "top_k"]}
+                                                    -> {rotation, translation, qpos, score, tips, knuckles, joint_names}
 Every reply has "error" (None or a message) and "t" (seconds spent).
 
 Pickle executes code on load: the server binds to 127.0.0.1 by default — expose it on a network
@@ -29,13 +32,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-DEFAULT_BIND = {"gsam": "tcp://127.0.0.1:5556", "cgn": "tcp://127.0.0.1:5555"}
+DEFAULT_BIND = {"gsam": "tcp://127.0.0.1:5556", "cgn": "tcp://127.0.0.1:5555", "dgn2": "tcp://127.0.0.1:5557"}
 
 
 def main():
     p = argparse.ArgumentParser(description="steve_perception model server (one model per process)")
     p.add_argument("model", choices=sorted(DEFAULT_BIND))
-    p.add_argument("--bind", default=None, help="default: gsam tcp://127.0.0.1:5556, cgn tcp://127.0.0.1:5555")
+    p.add_argument("--bind", default=None, help="default: gsam tcp://127.0.0.1:5556, cgn tcp://127.0.0.1:5555, "
+                                                "dgn2 tcp://127.0.0.1:5557")
     p.add_argument("--device", default="cuda")
     g = p.add_argument_group("gsam")
     g.add_argument("--gdino_repo")
@@ -51,6 +55,10 @@ def main():
     g = p.add_argument_group("cgn")
     g.add_argument("--cgn_repo")
     g.add_argument("--cgn_ckpt", help="default: <cgn_repo>/checkpoints/contact_graspnet")
+    g = p.add_argument_group("dgn2")
+    g.add_argument("--dgn2_repo", help="clone of github.com/PKU-EPIC/DexGraspNet2")
+    g.add_argument("--dgn2_ckpt", help="the dexterous checkpoint, e.g. <dgn2_repo>/experiments/dex_ours/ckpt/"
+                                       "ckpt_50000.pth (its config.yaml two folders up)")
     a = p.parse_args()
     bind = a.bind or DEFAULT_BIND[a.model]
 
@@ -79,6 +87,11 @@ def main():
         cfg = a.gdino_config or str(Path(a.gdino_repo) / "groundingdino/config/GroundingDINO_SwinT_OGC.py")
         model = GroundedSAM(a.gdino_repo, cfg, a.gdino_weights, a.sam_repo, a.sam_weights, a.sam_type,
                             a.device, a.gdino_image_size, fp16=not a.fp32)
+    elif a.model == "dgn2":
+        if not a.dgn2_repo or not a.dgn2_ckpt:
+            sys.exit("[model_server] dgn2 needs --dgn2_repo and --dgn2_ckpt")
+        from dgn2 import DexGraspNet2
+        model = DexGraspNet2(a.dgn2_repo, a.dgn2_ckpt, a.device)
     else:
         if not a.cgn_repo:
             sys.exit("[model_server] cgn needs --cgn_repo")
@@ -96,6 +109,9 @@ def main():
             return model.grasps(req["depth"], req["K"], req.get("segmap"), req.get("rgb"),
                                 req.get("z_range", (0.2, 1.5)), req.get("forward_passes", 1),
                                 req.get("local_regions", True), req.get("filter_grasps", True))
+        if a.model == "dgn2" and op == "dexgrasp":
+            return model.grasps(req["depth"], req["K"], req.get("mask"), req.get("z_range", (0.15, 1.5)),
+                                req.get("n_seeds", 128), req.get("graspness_scale", 5.0), req.get("top_k", 32))
         raise ValueError(f"op '{op}' not served by the {a.model} server")
 
     print(f"[model_server] {a.model} listening on {bind}", flush=True)
@@ -121,6 +137,9 @@ def main():
             op = req.get("op", "grasp") if isinstance(req, dict) else "?"
             if rep["error"]:
                 print(f"[model_server] {op}: ERROR {rep['error']}", flush=True)
+            elif op == "dexgrasp":
+                print(f"[model_server] dexgrasp: {rep['t'] * 1000:.0f} ms, {len(rep['score'])} grasp(s) from "
+                      f"{rep['n_points']} points", flush=True)
             elif op == "grasp":
                 print(f"[model_server] grasp: {rep['t'] * 1000:.0f} ms, "
                       f"{sum(len(v) for v in rep['scores'].values())} grasp(s)", flush=True)

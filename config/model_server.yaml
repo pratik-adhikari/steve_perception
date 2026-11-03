@@ -15,3 +15,10 @@ cgn:                       # Contact-GraspNet (PyTorch port): depth + target mas
   env: cgn_env
   bind: tcp://127.0.0.1:5555   # DiNBV-Grasp's port: grasp_test/cgn_client.py talks to it as well
   cgn_repo: ~/steve_ros2_ws/perception_tests/contact_graspnet_pytorch
+dgn2:                      # DexGraspNet 2.0 (LEAP hand, CC BY-NC 4.0): depth + area mask -> dexterous grasps,
+                           # retargeted to the Ability Hand on the robot side (steve_grasping.retarget)
+  env: dgn2_env            # Python 3.8, CUDA 11.7 (envs/dgn2_env.yml; MinkowskiEngine / pytorch3d / TorchSDF
+                           # are built by hand, see model_server/README.md)
+  bind: tcp://127.0.0.1:5557
+  dgn2_repo: ~/Master_Thesis/steve_ros2_ws/perception_tests/DexGraspNet2      # set up by model_server/envs/setup_dgn2.sh
+  dgn2_ckpt: ~/Master_Thesis/steve_ros2_ws/perception_tests/DexGraspNet2/experiments/dex_ours/ckpt/ckpt_50000.pth

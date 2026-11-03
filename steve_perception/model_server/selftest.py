@@ -7,6 +7,7 @@ mask, optionally VGN on the same view; annotated images + npz into an output fol
     ros2 run steve_perception perception_selftest                 # newest grasp_test snapshot
     ros2 run steve_perception perception_selftest --snapshot ~/ros_logs/grasp_test/<run>/snapshot.npz \\
         --prompt "red ball" --vgn
+    ros2 run steve_perception perception_selftest --dgn2          # + DexGraspNet 2.0 -> the Ability Hand
 
 A snapshot is an npz with rgb (HxWx3), depth (HxW or NxHxW, metres) and K (3x3), as written by
 handheld_grasp_test. Its camera pose is unknown: the camera is assumed to look straight down from
@@ -35,6 +36,9 @@ def main(argv=None):
     p.add_argument("--prompt", default="red ball")
     p.add_argument("--size", type=float, default=0.065, help="object diameter [m]")
     p.add_argument("--vgn", action="store_true", help="also VGN on the same view (vgn_env)")
+    p.add_argument("--dgn2", action="store_true",
+                   help="also DexGraspNet 2.0 (model server dgn2), retargeted to --tool's hand")
+    p.add_argument("--tool", default="ability_hand", help="--dgn2: the hand its grasps are retargeted to")
     p.add_argument("--out", default="auto", help="output folder (default: ~/ros_logs/perception_<time>/selftest)")
     a = p.parse_args(argv)
 
@@ -82,6 +86,10 @@ def main(argv=None):
     if a.vgn:
         from steve_perception.vgn import VGNBridge
         backends.append(("VGN", VGNBridge()))
+    if a.dgn2:
+        from steve_grasping.tools import load_tool
+        from steve_perception.dgn2 import DGN2Bridge
+        backends.append(("DexGraspNet 2.0", DGN2Bridge(load_tool(a.tool), 0.5 * a.size)))
     for n, (name, b) in enumerate(backends, 1):
         b.start_health_check()
         while b.health() is None:
@@ -97,7 +105,9 @@ def main(argv=None):
         b.save_scan(out, n, best)
         print(f"[{name}] {time.monotonic() - t0:.2f} s: " + (
             f"best grasp score {best[3]:.3f}, width {best[2] * 100:.1f} cm, fingertip centre "
-            f"{np.linalg.norm(best[0] - centre) * 100:.1f} cm from the object centre" if best else "no grasp on the target")
+            f"{np.linalg.norm(best[0] - centre) * 100:.1f} cm from the object centre"
+            + (f" | {b.best_meta}" if getattr(b, "best_meta", None) is not None else "") if best
+            else "no grasp on the target")
             + f"  -> scan{n:02d}_view1.jpg")
     print(f"done: {out}")
 

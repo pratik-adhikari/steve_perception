@@ -1,0 +1,41 @@
+# DexGraspNet 2.0 (github.com/PKU-EPIC/DexGraspNet2) for steve_perception's model_server (dgn2): only what inference
+# needs. Run setup_dgn2.sh, not this file alone (it adds the CUDA 11.7 compiler, pytorch3d, nflows, torchprimitivesdf
+# and MinkowskiEngine and checks every step):
+#   bash setup_dgn2.sh
+# Pins that matter (2026-10-30, first attempt):
+#   - pytorch from the pytorch channel (old C++ ABI, as the prebuilt pytorch3d 0.7.5 py38_cu117_pyt201 is compiled);
+#     the defaults channel's 2.0.1 (cuda 11.8, new ABI) made pytorch3d fail with "undefined symbol ...Ss"
+#   - mkl 2023.1 (torch 2.0.1 does not import with mkl >= 2024.1) + mkl-include: MinkowskiEngine's BLAS (--blas=mkl).
+#     No openblas: conda-forge's pulled in nomkl, which rules out the pytorch channel build
+#   - no nflows here: its pip dependencies install a second torch (2.4.1 + CUDA 12 wheels) — setup_dgn2.sh adds it
+#     with --no-deps
+name: dgn2_env
+channels: [pytorch, nvidia, defaults]
+dependencies:
+  - python=3.8
+  - pip
+  - pytorch::pytorch=2.0.1=py3.8_cuda11.7_cudnn8.5.0_0
+  - pytorch::torchvision=0.15.2=py38_cu117
+  - pytorch::pytorch-cuda=11.7
+  - mkl=2023.1.0
+  - mkl-include=2023.1.0
+  - pip:
+      - setuptools==69.5.1      # < 70: pkg_resources / distutils for the compiled extensions
+      - numpy==1.24.4
+      - scipy
+      - einops
+      - trimesh
+      - transforms3d
+      - urdf-parser-py
+      - ikpy
+      - plotly
+      - pyyaml
+      - tqdm
+      - pillow
+      - opencv-python-headless==4.8.1.78
+      - pyzmq
+      - diffusers==0.24.0
+      - huggingface_hub==0.20.3   # diffusers 0.24 imports cached_download (removed in huggingface_hub 0.26)
+      - fvcore
+      - iopath
+      - ninja

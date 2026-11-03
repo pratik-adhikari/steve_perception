@@ -5,6 +5,8 @@ client.py — ROS-side (system Python) client of the model servers (server.py).
     dets = gsam.segment(rgb, "red ball")            # [{box, score, phrase, mask}], best first
     cgn = ModelClient(CGN_ENDPOINT)
     res = cgn.grasps(depth, K, segmap)              # {pred_grasps_cam, scores, contact_pts, gripper_openings}
+    dgn2 = ModelClient(DGN2_ENDPOINT)
+    res = dgn2.dex_grasps(depth, K, mask)           # DexGraspNet 2.0: LEAP grasps (camera frame), best first
 
 Needs pyzmq in the system Python (sudo apt install python3-zmq). A timed-out request leaves a ZMQ
 REQ socket unusable, so the socket is recreated after every failure.
@@ -16,6 +18,7 @@ import numpy as np
 
 GSAM_ENDPOINT = "tcp://127.0.0.1:5556"
 CGN_ENDPOINT = "tcp://127.0.0.1:5555"
+DGN2_ENDPOINT = "tcp://127.0.0.1:5557"
 
 
 class ModelServerError(RuntimeError):
@@ -81,6 +84,13 @@ class ModelClient:
                           "segmap": None if segmap is None else np.asarray(segmap, np.int32),
                           "z_range": list(z_range), "forward_passes": forward_passes,
                           "local_regions": local_regions, "filter_grasps": filter_grasps})
+
+    def dex_grasps(self, depth, K, mask=None, z_range=(0.15, 1.5), n_seeds=128, top_k=32):
+        """DexGraspNet 2.0 (dgn2 server): LEAP grasps in the camera frame, best first —
+        {rotation, translation, qpos, score, tips (index, middle, ring, thumb), knuckles, joint_names}."""
+        return self.call({"op": "dexgrasp", "depth": np.asarray(depth, np.float32), "K": np.asarray(K, float),
+                          "mask": None if mask is None else np.asarray(mask, bool), "z_range": list(z_range),
+                          "n_seeds": int(n_seeds), "top_k": int(top_k)})
 
     def close(self):
         self._reset()

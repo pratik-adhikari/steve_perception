@@ -115,3 +115,34 @@ nodes. For offline tests drop the profile:
 unset FASTRTPS_DEFAULT_PROFILES_FILE; export ROS_DOMAIN_ID=99 ROS_LOCALHOST_ONLY=1
 ros2 node list --no-daemon      # must show none of the robot's nodes
 ```
+
+## DexGraspNet 2.0 (`dgn2`, optional)
+
+Dexterous grasps for the Ability Hand (`active_perception_wbc --grasp_backend dgn2`): DexGraspNet 2.0
+(Zhang et al., CoRL 2024; generative, trained on 427k synthetic cluttered scenes) predicts grasps of the
+**LEAP hand** from one depth view; `steve_perception/dgn2/bridge.py` retargets each to the Ability Hand
+(`steve_grasping/retarget.py`: grasp point, approach and closing direction from the LEAP fingertips and
+knuckles, the Ability Hand's grasp type by aperture and depth in the palm). Licence **CC BY-NC 4.0**
+(non-commercial: fine for the thesis, not for products).
+
+Setup (once; ~30-60 min, mostly building MinkowskiEngine; ~12 GB): one script, re-runnable — finished steps
+are skipped, it stops with a message at the first failure:
+
+```bash
+bash ~/Master_Thesis/steve_ros2_ws/src/steve_perception/steve_perception/model_server/envs/setup_dgn2.sh
+```
+
+It puts the repo in the workspace's `perception_tests/DexGraspNet2` (git-ignored, `COLCON_IGNORE`), creates
+`dgn2_env` (Python 3.8, PyTorch 2.0.1 + CUDA 11.7, the CUDA 11.7 compiler from conda — no system CUDA needed),
+installs the prebuilt pytorch3d 0.7.5, compiles torchprimitivesdf and MinkowskiEngine (sm_86), downloads the
+checkpoint tar (6.2 GB, Hugging Face) and extracts `experiments/dex_ours`, then runs the model on a synthetic
+view (`python dgn2.py --repo ... --ckpt ...`). Only inference dependencies: no IsaacGym, open3d, wandb;
+graspnetAPI (the repo's dataset visualiser) is stubbed in `dgn2.py`. Everything runs with the env's own python
+and `PYTHONNOUSERSITE=1` — a torch in `~/.local` would shadow the env's.
+
+```bash
+ros2 run steve_perception model_server dgn2
+ros2 run steve_perception perception_selftest --dgn2      # newest grasp_test snapshot
+```
+
+GPU: the network and 128 seeds fit in < 3 GB; < 0.5 s per view in the paper (RTX 3090).
