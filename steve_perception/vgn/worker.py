@@ -35,6 +35,10 @@ import sys
 import numpy as np
 from pathlib import Path
 
+FOUND_THRESHOLD = 0.90  # VGN's own: a grasp at least this good -> found
+CAND_THRESHOLD = 0.75   # candidates returned (the caller ranks them by score, drops infeasible ones)
+CAND_NMS = 2            # voxels: non-maximum suppression window for those
+
 
 def load(model_path, vgn_src):
     """torch, the vendored VGN library and the network (the slow part of a one-shot call)."""
@@ -103,10 +107,12 @@ def infer(npz_path, tsdf_size, tsdf_res, net, device):
     tsdf_grid        = tsdf.get_grid()          # (1, 40, 40, 40)
     qual, rot, width = predict(tsdf_grid, net, device)
     qual, rot, width = process(tsdf_grid, qual, rot, width)
-    grasps, scores   = select(qual.copy(), rot, width)
+    # more, closer-spaced candidates than VGN's default (0.90, NMS 4 voxels: 1-2 on a ball, all ~top-down) so the
+    # caller can pick one its own gripper / arm can execute next to obstacles; "found" (the verdict) stays at 0.90
+    grasps, scores   = select(qual.copy(), rot, width, threshold=CAND_THRESHOLD, max_filter_size=CAND_NMS)
 
-    if len(grasps) == 0:
-        return {"found": False, "n_candidates": 0, "error": None}
+    if len(grasps) == 0 or max(scores) < FOUND_THRESHOLD:
+        return {"found": False, "n_candidates": len(grasps), "error": None}
 
     grasps_m = [from_voxel_coordinates(g, voxel_size) for g in grasps]
     best     = int(np.argmax(scores))

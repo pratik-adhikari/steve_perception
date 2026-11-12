@@ -499,6 +499,22 @@ class VGNBridge:
                   f"{'best on the target: score %.3f' % best[3] if best else 'none on the target'}")
         return best
 
+    def grasps_world(self, near: Optional[np.ndarray] = None, xy_radius: float = np.inf,
+                     z_window: float = np.inf) -> list:
+        """Every candidate of the last inference as (pos_world, rot 3x3, width_m, score), best first; near /
+        xy_radius / z_window as best_grasp_world (only grasps on the target)."""
+        if self._grasp_pos_tsdf is None or self._tsdf_origin is None:
+            return []
+        out = []
+        for c in getattr(self, "_candidates", []):
+            pos = self._tsdf_origin + np.asarray(c["pos_tsdf"])
+            if near is not None:
+                d = pos - np.asarray(near, float)
+                if np.hypot(d[0], d[1]) > xy_radius or abs(d[2]) > z_window:
+                    continue
+            out.append((pos, np.asarray(c["rot_flat"]).reshape(3, 3), float(c["width_m"]), float(c["score"])))
+        return sorted(out, key=lambda g: -g[3])
+
     @property
     def n_views(self) -> int:
         return len(self._views)
