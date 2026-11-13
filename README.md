@@ -8,7 +8,7 @@ Unified 3D Perception & Scene Graph Pipeline.
 
 ### Repository
 ```bash
-git clone --recursive https://github.com/pratik-adhikari/steve_perception.git
+git clone --recursive git@gitlab.igg.uni-bonn.de:hrl_software/steve-moma/steve_perception.git
 cd steve_perception
 ```
 
@@ -110,3 +110,16 @@ ros2 run steve_perception handheld_grasp_test --live
 ## Documentation
 - [**Pipeline Details**](docs/PIPELINE_USAGE.md)
 - [**Technical Architecture**](docs/TECHNICAL_DETAILS.md)
+
+---
+
+## Contributors & Acknowledgments
+
+This project is developed at the **Humanoid Robots Lab (HRL)**, University of Bonn.
+
+- **Pratik Adhikari** - [GitHub](https://github.com/pratik-adhikari) | [Email](mailto:pratikadhikari.de@gmail.com)
+- **Shrikar Nakhye** - [GitHub](https://github.com/Itsshriks) | [Email](mailto:nakhyeshrikar@icloud.com)
+
+### Acknowledgements
+- **Rohit Menon** - For mentorship and technical guidance on Neobotix platforms.
+- **Prof. Maren Bennewitz** - Head of the Humanoid Robots Lab, University of Bonn.
