@@ -10,6 +10,7 @@ Started by `ros2 run steve_perception model_server <model>` (launcher.py), each 
 ZMQ REP, pickled dicts (cgn: the protocol of DiNBV-Grasp's graspnet_server, extended by "op"):
   {"op": "ping"}                                    -> {"model": "gsam" | "cgn"}
   gsam {"op": "segment", "rgb", "prompt", ["box_threshold", "text_threshold", "max_dets"]}
+  gsam {"op": "segment_box", "rgb", "box" [x0 y0 x1 y1], ["point" (x, y)]}  -> {"mask", "score"} (SAM only)
                                                     -> {"detections": [{box, score, phrase, mask}]}
   cgn  {"op": "grasp" (or no op), "depth", "K", ["segmap", "z_range", "forward_passes",
         "local_regions", "filter_grasps"]}          -> {pred_grasps_cam, scores, contact_pts, gripper_openings}
@@ -105,6 +106,8 @@ def main():
         if a.model == "gsam" and op == "segment":
             return {"detections": model.segment(req["rgb"], req["prompt"], req.get("box_threshold", 0.35),
                                                 req.get("text_threshold", 0.25), req.get("max_dets", 5))}
+        if a.model == "gsam" and op == "segment_box":
+            return model.segment_box(req["rgb"], req["box"], req.get("point"))
         if a.model == "cgn" and op == "grasp":
             return model.grasps(req["depth"], req["K"], req.get("segmap"), req.get("rgb"),
                                 req.get("z_range", (0.2, 1.5)), req.get("forward_passes", 1),

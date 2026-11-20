@@ -115,3 +115,16 @@ class GroundedSAM:
         xyxy, scores = xyxy.cpu().numpy(), scores.cpu().numpy()
         return [{"box": xyxy[i].tolist(), "score": float(scores[i]), "phrase": phrases[i], "mask": masks[i]}
                 for i in range(len(scores))]
+
+    def segment_box(self, rgb, box, point=None):
+        """SAM only (no text): mask of the object inside box [x0 y0 x1 y1] px, optionally with a foreground
+        point (x, y) on it — for teaching an object by drawing a box around it. -> {mask, score}"""
+        rgb = np.ascontiguousarray(rgb[..., :3], dtype=np.uint8)
+        with self.torch.no_grad(), self.torch.autocast("cuda", dtype=self.torch.float16, enabled=self.fp16):
+            self.sam.set_image(rgb)
+            kw = {}
+            if point is not None:
+                kw = {"point_coords": np.array([point], float), "point_labels": np.array([1])}
+            masks, scores, _ = self.sam.predict(box=np.asarray(box, float), multimask_output=True, **kw)
+        i = int(np.argmax(scores))
+        return {"mask": masks[i].astype(bool), "score": float(scores[i])}

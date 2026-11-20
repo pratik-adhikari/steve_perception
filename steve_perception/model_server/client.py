@@ -78,6 +78,12 @@ class ModelClient:
                           "box_threshold": box_threshold, "text_threshold": text_threshold,
                           "max_dets": max_dets})["detections"]
 
+    def segment_box(self, rgb, box, point=None):
+        """SAM mask of the object in box [x0 y0 x1 y1] px (no text prompt): {mask, score}."""
+        rep = self.call({"op": "segment_box", "rgb": np.ascontiguousarray(rgb, np.uint8),
+                         "box": [float(v) for v in box], "point": None if point is None else list(point)})
+        return {"mask": rep["mask"], "score": rep["score"]}
+
     def grasps(self, depth, K, segmap=None, z_range=(0.2, 1.5), forward_passes=1, local_regions=True,
                filter_grasps=True):
         return self.call({"op": "grasp", "depth": np.asarray(depth, np.float32), "K": np.asarray(K, float),

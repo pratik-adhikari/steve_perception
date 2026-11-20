@@ -14,8 +14,13 @@ against the known object:
   * sphere: least-squares sphere fit of the mask's depth (known radius) must succeed, and the
     mask's apparent size must match the object size at its depth (size_tolerance);
   * other shapes: the size check only; centre = visible surface pushed half a size along the ray.
+Taught object (`profile`: a target profile YAML recorded with steve_wbc's target_calibrator --gsam):
+prompt, size and shape come from the profile, and every mask must also LOOK like the taught object —
+its colour signature (steve_perception.utils.appearance) at least `min_similarity` like the
+profile's — so with prompt "mug" only the mug that was shown is picked, not any mug.
 Several plausible masks (clutter with look-alikes): the one nearest the last published position
-(within `gate`, for `gate_hold` s), otherwise the one GroundingDINO scores highest.
+(within `gate`, for `gate_hold` s), otherwise the most alike (taught object) or the one GroundingDINO
+scores highest.
 
 Records (save_dir, default auto = the launch's log folder, '' = off): <run>/detector/ gets an
 annotated frame every save_period s (masks, boxes, scores, why a mask was rejected, the chosen one
@@ -23,6 +28,8 @@ green) and detections.csv with every processed frame.
 
     ros2 run steve_perception gsam_target_detector --ros-args -p prompt:="red ball" \\
         -p cameras:="[gripper_camera]" -p object_size:=0.065
+    ros2 run steve_perception gsam_target_detector --ros-args \\
+        -p profile:=$HOME/Master_Thesis/steve_ros2_ws/src/steve_wbc/config/targets/mug.yaml
 """
 
 import threading
@@ -39,6 +46,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from steve_perception.model_server import GSAM_ENDPOINT, ModelClient, ModelServerError
+from steve_perception.utils.appearance import appearance_signature, similarity
 from steve_perception.utils.object_geometry import (R_OPT_TO_XFWD, image_to_array, mask_points,
                                                     quat_to_mat, sphere_center)
 from steve_perception.utils.run_record import ImageRecorder, save_folder
@@ -56,10 +64,13 @@ class GsamTargetDetector(Node):
     def __init__(self):
         super().__init__("gsam_target_detector")
         p = lambda n, v: self.declare_parameter(n, v).value
-        self.prompt = p("prompt", "red ball")
+        prof = load_profile(p("profile", ""))        # taught object: prompt, size, shape, appearance
+        self.prompt = p("prompt", "") or prof.get("prompt") or "red ball"
         self.target_frame = p("target_frame", "odom")
-        self.size = p("object_size", 0.065)          # m: sphere diameter / largest box side
-        self.shape = p("shape", "sphere")            # sphere | other
+        self.size = float(prof.get("size", p("object_size", 0.065)))  # m: sphere diameter / largest side
+        self.shape = "sphere" if prof.get("shape", p("shape", "sphere")) == "sphere" else "other"
+        self.appearance = prof.get("appearance") or None
+        self.min_sim = p("min_similarity", 0.5)      # colour signature at least this alike the taught one
         self.box_threshold = p("box_threshold", 0.35)
         self.text_threshold = p("text_threshold", 0.25)
         self.size_tol = p("size_tolerance", 0.4)     # apparent size within (1 ± tol) x expected
@@ -81,7 +92,7 @@ class GsamTargetDetector(Node):
         if folder is not None:
             self.rec = ImageRecorder(folder, p("save_period", 0.5),
                                      ["wall_time", "stamp", "camera", "masks", "chosen", "score", "x", "y", "z",
-                                      "rejected"])
+                                      "rejected", "similarity"])
             self.get_logger().info(f"saving detections to {folder}")
 
         self.lock = threading.Lock()
@@ -100,7 +111,9 @@ class GsamTargetDetector(Node):
             c["sync"].registerCallback(lambda rgb, depth, c=c: self._frame_cb(c, rgb, depth))
             self.get_logger().info(f"camera '{name}': {ns}/{{{img_t}, {depth_t}}}  frame={conv}")
         self.get_logger().info(f"target: '{self.prompt}' ({self.size * 100:.1f} cm {self.shape}) via "
-                               f"Grounded SAM at {server}")
+                               f"Grounded SAM at {server}"
+                               + (f", taught object '{prof.get('name', '?')}' (look-alike >= {self.min_sim:.2f})"
+                                  if self.appearance else ""))
         self.last = None            # (position, monotonic time) of the last published detection
         self.t_sum, self.err = 0.0, None
         self.create_timer(5.0, self._report)
@@ -163,6 +176,12 @@ class GsamTargetDetector(Node):
 
         K, cands = c["K"], []
         for d in dets:
+            d["sim"] = None
+            if self.appearance is not None:  # cheap colour check first: a different-looking object is not it
+                d["sim"] = similarity(self.appearance, appearance_signature(rgb, d["mask"]))
+                if d["sim"] < self.min_sim:
+                    d["why"] = f"look {d['sim']:.2f}"
+                    continue
             p_opt, why = self._locate(d["mask"], depth, K)
             d["why"] = why
             if p_opt is not None:
@@ -174,7 +193,7 @@ class GsamTargetDetector(Node):
                 return
             R, tr = tf
             world = [(d, R @ (R_OPT_TO_XFWD @ p if c["conv"] == "x_forward" else p) + tr) for d, p in cands]
-            best = max(world, key=lambda dw: dw[0]["score"])
+            best = max(world, key=lambda dw: (dw[0]["sim"] or 0.0, dw[0]["score"]))
             if self.last is not None and time.monotonic() - self.last[1] < self.gate_hold:
                 near = min(world, key=lambda dw: np.linalg.norm(dw[1] - self.last[0]))
                 if np.linalg.norm(near[1] - self.last[0]) < self.gate:
@@ -191,7 +210,8 @@ class GsamTargetDetector(Node):
             self.rec.log([f"{time.time():.3f}", f"{st.sec}.{st.nanosec:09d}", c["name"], len(dets),
                           chosen["phrase"] if chosen else "", f"{chosen['score']:.3f}" if chosen else "",
                           *(f"{v:.4f}" for v in (best[1] if best else ())), *([""] * (3 if not best else 0)),
-                          "; ".join(f"{d['phrase']} {d['score']:.2f}: {d['why']}" for d in dets if d.get("why"))])
+                          "; ".join(f"{d['phrase']} {d['score']:.2f}: {d['why']}" for d in dets if d.get("why")),
+                          f"{chosen['sim']:.3f}" if chosen and chosen.get("sim") is not None else ""])
         publish = self.dbg_pub is not None and self.dbg_pub.get_subscription_count() > 0
         save = self.rec is not None and self.rec.due()
         if publish or save:
@@ -240,7 +260,8 @@ class GsamTargetDetector(Node):
             vis[d["mask"]] = (0.55 * vis[d["mask"]] + 0.45 * np.array(col)).astype(np.uint8)
             x0, y0, x1, y1 = (int(v) for v in d["box"])
             cv2.rectangle(vis, (x0, y0), (x1, y1), col, 2)
-            label = f"{d['phrase']} {d['score']:.2f}" + (f" [{d['why']}]" if d.get("why") else "")
+            label = (f"{d['phrase']} {d['score']:.2f}" + (f" look {d['sim']:.2f}" if d.get("sim") is not None else "")
+                     + (f" [{d['why']}]" if d.get("why") else ""))
             cv2.putText(vis, label, (x0, max(14, y0 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
         head = (f"'{self.prompt}': " + (f"{self.target_frame} ({pos[0]:+.3f}, {pos[1]:+.3f}, {pos[2]:.3f})"
                                         if pos is not None else f"none ({len(dets)} mask(s))"))
@@ -261,6 +282,16 @@ class GsamTargetDetector(Node):
         if self.rec is not None:
             self.rec.close()
         super().destroy_node()
+
+
+def load_profile(path):
+    """Target profile YAML (steve_wbc config/targets/<name>.yaml) as a dict; {} for ''. Read here directly so
+    steve_perception does not depend on steve_wbc."""
+    if not path:
+        return {}
+    import yaml
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
 
 
 def main(args=None):
