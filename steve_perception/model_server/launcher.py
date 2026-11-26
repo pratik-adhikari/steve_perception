@@ -18,8 +18,12 @@ SERVER = Path(__file__).resolve().parent / "server.py"
 
 
 def config_path(arg=None):
-    if arg:
-        return Path(arg).expanduser()
+    """--config, else $STEVE_MODEL_SERVER_CONFIG, else ~/.ros/model_server.yaml (this machine's paths: model code
+    and weights live outside the package), else the package's config/model_server.yaml."""
+    import os
+    for c in (arg, os.environ.get("STEVE_MODEL_SERVER_CONFIG"), "~/.ros/model_server.yaml"):
+        if c and (c == arg or Path(c).expanduser().is_file()):
+            return Path(c).expanduser()
     try:
         from ament_index_python.packages import get_package_share_directory
         return Path(get_package_share_directory("steve_perception")) / "config" / "model_server.yaml"

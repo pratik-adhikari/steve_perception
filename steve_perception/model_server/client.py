@@ -73,16 +73,22 @@ class ModelClient:
         except ModelServerError:
             return None
 
-    def segment(self, rgb, prompt, box_threshold=0.35, text_threshold=0.25, max_dets=5):
+    def segment(self, rgb, prompt, box_threshold=0.35, text_threshold=0.25, max_dets=5, embed=False):
+        """[{box, score, phrase, mask[, embedding]}]; embed=True: each mask's appearance fingerprint too."""
         return self.call({"op": "segment", "rgb": np.ascontiguousarray(rgb, np.uint8), "prompt": prompt,
                           "box_threshold": box_threshold, "text_threshold": text_threshold,
-                          "max_dets": max_dets})["detections"]
+                          "max_dets": max_dets, "embed": bool(embed)})["detections"]
+
+    def embed(self, rgb, masks):
+        """Appearance fingerprints ((256,) float32, L2-normalised; None for an empty mask) of the masked objects."""
+        return self.call({"op": "embed", "rgb": np.ascontiguousarray(rgb, np.uint8),
+                          "masks": [np.asarray(m, bool) for m in masks]})["embeddings"]
 
     def segment_box(self, rgb, box, point=None):
-        """SAM mask of the object in box [x0 y0 x1 y1] px (no text prompt): {mask, score}."""
+        """SAM mask of the object in box [x0 y0 x1 y1] px (no text prompt): {mask, score, embedding}."""
         rep = self.call({"op": "segment_box", "rgb": np.ascontiguousarray(rgb, np.uint8),
                          "box": [float(v) for v in box], "point": None if point is None else list(point)})
-        return {"mask": rep["mask"], "score": rep["score"]}
+        return {"mask": rep["mask"], "score": rep["score"], "embedding": rep.get("embedding")}
 
     def grasps(self, depth, K, segmap=None, z_range=(0.2, 1.5), forward_passes=1, local_regions=True,
                filter_grasps=True):

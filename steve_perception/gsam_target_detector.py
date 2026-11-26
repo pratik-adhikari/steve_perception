@@ -21,6 +21,13 @@ profile's — so with prompt "mug" only the mug that was shown is picked, not an
 Several plausible masks (clutter with look-alikes): the one nearest the last published position
 (within `gate`, for `gate_hold` s), otherwise the most alike (taught object) or the one GroundingDINO
 scores highest.
+Object taught with views (steve_wbc object_teacher: <profile>_views.npz): every mask's SAM fingerprint must match
+the taught views (score >= the profile's match_threshold) AND beat every OTHER taught object in the same folder by
+`margin` (steve_perception.utils.object_library) — a look-alike that was taught too is refused. Before the first
+position is published, `confirm_n` accepted frames within `confirm_t` s must agree (within `gate`); two accepted
+objects apart with nothing tracked yet is AMBIGUOUS: nothing is published (the robot does not pick either).
+Status (std_msgs/String, JSON) on `status_topic`: {target, state: searching|confirming|confirmed|ambiguous, score,
+why} — what the web GUI shows.
 
 Records (save_dir, default auto = the launch's log folder, '' = off): <run>/detector/ gets an
 annotated frame every save_period s (masks, boxes, scores, why a mask was rejected, the chosen one
@@ -37,16 +44,20 @@ import time
 
 import numpy as np
 import rclpy
+import json
+
 from geometry_msgs.msg import PointStamped
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from steve_perception.model_server import GSAM_ENDPOINT, ModelClient, ModelServerError
 from steve_perception.utils.appearance import appearance_signature, similarity
+from steve_perception.utils.object_library import MARGIN, ObjectLibrary
 from steve_perception.utils.object_geometry import (R_OPT_TO_XFWD, image_to_array, mask_points,
                                                     quat_to_mat, sphere_center)
 from steve_perception.utils.run_record import ImageRecorder, save_folder
@@ -71,6 +82,19 @@ class GsamTargetDetector(Node):
         self.shape = "sphere" if prof.get("shape", p("shape", "sphere")) == "sphere" else "other"
         self.appearance = prof.get("appearance") or None
         self.min_sim = p("min_similarity", 0.5)      # colour signature at least this alike the taught one
+        # taught views (object_teacher): fingerprints of every taught object in the profile's folder
+        self.target = prof.get("name", "")
+        self.lib = None
+        if prof.get("_path"):
+            from pathlib import Path
+            lib = ObjectLibrary.load(Path(prof["_path"]).parent)
+            self.lib = lib if self.target in lib.objects else None
+        self.margin = p("margin", MARGIN)
+        self.confirm_n, self.confirm_t = p("confirm_n", 3), p("confirm_t", 1.5)
+        self.accepted = []                           # (monotonic time, world position) of accepted frames
+        self.confirmed = False
+        self.status_pub = self.create_publisher(String, p("status_topic", "/steve_perception/target_status"), 10)
+        self.state, self.state_why, self.state_score = "searching", "", None
         self.box_threshold = p("box_threshold", 0.35)
         self.text_threshold = p("text_threshold", 0.25)
         self.size_tol = p("size_tolerance", 0.4)     # apparent size within (1 ± tol) x expected
@@ -113,7 +137,11 @@ class GsamTargetDetector(Node):
         self.get_logger().info(f"target: '{self.prompt}' ({self.size * 100:.1f} cm {self.shape}) via "
                                f"Grounded SAM at {server}"
                                + (f", taught object '{prof.get('name', '?')}' (look-alike >= {self.min_sim:.2f})"
-                                  if self.appearance else ""))
+                                  if self.appearance else "")
+                               + (f", taught views: fingerprint >= {self.lib.objects[self.target]['threshold']:.2f} "
+                                  f"and {self.margin:.2f} ahead of the other taught objects "
+                                  f"({', '.join(n for n in self.lib.names() if n != self.target) or 'none'})"
+                                  if self.lib else ""))
         self.last = None            # (position, monotonic time) of the last published detection
         self.t_sum, self.err = 0.0, None
         self.create_timer(5.0, self._report)
@@ -170,7 +198,7 @@ class GsamTargetDetector(Node):
                                    "aligned to colour", throttle_duration_sec=5.0)
             return
         t0 = time.monotonic()
-        dets = self.client.segment(rgb, self.prompt, self.box_threshold, self.text_threshold)
+        dets = self.client.segment(rgb, self.prompt, self.box_threshold, self.text_threshold, embed=self.lib is not None)
         self.t_sum += time.monotonic() - t0
         c["n_req"] += 1
 
@@ -182,22 +210,55 @@ class GsamTargetDetector(Node):
                 if d["sim"] < self.min_sim:
                     d["why"] = f"look {d['sim']:.2f}"
                     continue
+            if self.lib is not None:  # is it THIS taught object, and not another taught one?
+                m = self.lib.match(d.get("embedding"), self.target, self.margin)
+                d["match"] = m.score
+                if not m.ok:
+                    d["why"] = m.why
+                    continue
             p_opt, why = self._locate(d["mask"], depth, K)
             d["why"] = why
             if p_opt is not None:
                 cands.append((d, p_opt))
         best = None
+        if self.lib is not None and self.confirmed and (self.last is None
+                                                       or time.monotonic() - self.last[1] > self.gate_hold):
+            self.confirmed, self.accepted = False, []  # lost: confirm it again before publishing
+        if not cands and self.lib is not None:
+            why = next((d["why"] for d in dets if d.get("why")), "" if dets else f"no '{self.prompt}' in view")
+            self._set_state("searching", why, max((d.get("match") or 0.0 for d in dets), default=None))
         if cands:
             tf = self._lookup(rgb_msg)
             if tf is None:
                 return
             R, tr = tf
             world = [(d, R @ (R_OPT_TO_XFWD @ p if c["conv"] == "x_forward" else p) + tr) for d, p in cands]
-            best = max(world, key=lambda dw: (dw[0]["sim"] or 0.0, dw[0]["score"]))
-            if self.last is not None and time.monotonic() - self.last[1] < self.gate_hold:
+            best = max(world, key=lambda dw: (dw[0].get("match") or 0.0, dw[0]["sim"] or 0.0, dw[0]["score"]))
+            tracking = self.last is not None and time.monotonic() - self.last[1] < self.gate_hold
+            if tracking:
                 near = min(world, key=lambda dw: np.linalg.norm(dw[1] - self.last[0]))
                 if np.linalg.norm(near[1] - self.last[0]) < self.gate:
                     best = near  # stay on the tracked object among look-alikes
+                else:
+                    tracking = False
+            if self.lib is not None and not tracking and len(world) > 1 and max(
+                    np.linalg.norm(w[1] - best[1]) for w in world) > self.gate:
+                # two objects pass as the taught one and none is tracked yet: refuse to choose
+                self._set_state("ambiguous", f"{len(world)} objects match {self.target}", best[0].get("match"))
+                best = None
+        if best is not None and self.lib is not None and not self.confirmed:
+            # taught object: publish only once confirm_n frames within confirm_t s agree on where it is
+            now = time.monotonic()
+            self.accepted = [a for a in self.accepted if now - a[0] <= self.confirm_t
+                             and np.linalg.norm(a[1] - best[1]) < self.gate] + [(now, best[1])]
+            if len(self.accepted) < self.confirm_n:
+                self._set_state("confirming", f"{len(self.accepted)}/{self.confirm_n} frames", best[0].get("match"))
+                best = None
+            else:
+                self.confirmed = True
+        if best is not None:
+            if self.lib is not None:
+                self._set_state("confirmed", "", best[0].get("match"))
             out = PointStamped()
             out.header.stamp, out.header.frame_id = rgb_msg.header.stamp, self.target_frame
             out.point.x, out.point.y, out.point.z = (float(v) for v in best[1])
@@ -220,6 +281,14 @@ class GsamTargetDetector(Node):
                 self._publish_image(vis, rgb_msg.header)
             if save:
                 self.rec.save(vis, c["name"] if chosen else f"{c['name']}_none")
+
+    def _set_state(self, state, why="", score=None):
+        """The taught object's detection status for the web GUI / the operator (status_topic, JSON)."""
+        self.state, self.state_why, self.state_score = state, why, score
+        msg = String()
+        msg.data = json.dumps({"target": self.target, "state": state, "why": why,
+                               "score": None if score is None else round(float(score), 3)})
+        self.status_pub.publish(msg)
 
     def _locate(self, mask, depth, K):
         """(centre in the camera optical frame, None) or (None, reason)."""
@@ -291,7 +360,9 @@ def load_profile(path):
         return {}
     import yaml
     with open(path) as f:
-        return yaml.safe_load(f) or {}
+        d = yaml.safe_load(f) or {}
+    d["_path"] = str(path)  # its folder holds the other taught objects (object library)
+    return d
 
 
 def main(args=None):

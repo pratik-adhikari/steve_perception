@@ -80,8 +80,39 @@ class GroundedSAM:
         std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
         return (x - mean) / std
 
-    def segment(self, rgb, prompt, box_threshold=0.35, text_threshold=0.25, max_dets=5, nms_iou=0.5):
-        """rgb HxWx3 uint8 -> list of {box [x0 y0 x1 y1] px, score, phrase, mask HxW bool}, best first."""
+    def _embed(self, masks):
+        """Appearance fingerprints of objects in the image last given to SAM (set_image): its encoder's features
+        (256 x 64 x 64 over the padded 1024 px input) averaged inside each mask, L2-normalised -> list of float32
+        (256,) arrays, None for an empty mask. Tells a taught object from look-alikes better than its colours
+        alone (shape, texture, print); compared by cosine similarity (steve_perception.utils.appearance)."""
+        torch = self.torch
+        import torch.nn.functional as F
+        feats = self.sam.features.float()[0]               # (256, 64, 64)
+        nh, nw = self.sam.input_size                       # the image resized into the 1024 px square
+        out = []
+        for m in masks:
+            mt = torch.from_numpy(np.asarray(m, np.float32)).to(self.device)[None, None]
+            mt = F.interpolate(mt, size=(nh, nw), mode="bilinear", align_corners=False)
+            pad = torch.zeros((1, 1, 1024, 1024), device=self.device)
+            pad[..., :nh, :nw] = mt
+            w = F.adaptive_avg_pool2d(pad, feats.shape[1:])[0, 0]
+            if float(w.sum()) < 1e-6:
+                out.append(None)
+                continue
+            e = (feats * w).sum(dim=(1, 2)) / w.sum()
+            out.append((e / e.norm().clamp_min(1e-9)).cpu().numpy().astype(np.float32))
+        return out
+
+    def embed(self, rgb, masks):
+        """Fingerprints (see _embed) of the objects `masks` (HxW bool each) in rgb."""
+        rgb = np.ascontiguousarray(rgb[..., :3], dtype=np.uint8)
+        with self.torch.no_grad(), self.torch.autocast("cuda", dtype=self.torch.float16, enabled=self.fp16):
+            self.sam.set_image(rgb)
+        return self._embed(masks)
+
+    def segment(self, rgb, prompt, box_threshold=0.35, text_threshold=0.25, max_dets=5, nms_iou=0.5, embed=False):
+        """rgb HxWx3 uint8 -> list of {box [x0 y0 x1 y1] px, score, phrase, mask HxW bool[, embedding]}, best
+        first (embedding: the mask's fingerprint, with embed=True — SAM's features are there already)."""
         torch = self.torch
         from groundingdino.util.utils import get_phrases_from_posmap
         from torchvision.ops import box_convert, nms
@@ -113,8 +144,12 @@ class GroundedSAM:
                                                  multimask_output=False)
         masks = masks[:, 0].cpu().numpy()
         xyxy, scores = xyxy.cpu().numpy(), scores.cpu().numpy()
-        return [{"box": xyxy[i].tolist(), "score": float(scores[i]), "phrase": phrases[i], "mask": masks[i]}
-                for i in range(len(scores))]
+        out = [{"box": xyxy[i].tolist(), "score": float(scores[i]), "phrase": phrases[i], "mask": masks[i]}
+               for i in range(len(scores))]
+        if embed:
+            for d, e in zip(out, self._embed([d["mask"] for d in out])):
+                d["embedding"] = e
+        return out
 
     def segment_box(self, rgb, box, point=None):
         """SAM only (no text): mask of the object inside box [x0 y0 x1 y1] px, optionally with a foreground
@@ -127,4 +162,4 @@ class GroundedSAM:
                 kw = {"point_coords": np.array([point], float), "point_labels": np.array([1])}
             masks, scores, _ = self.sam.predict(box=np.asarray(box, float), multimask_output=True, **kw)
         i = int(np.argmax(scores))
-        return {"mask": masks[i].astype(bool), "score": float(scores[i])}
+        return {"mask": masks[i].astype(bool), "score": float(scores[i]), "embedding": self._embed([masks[i]])[0]}
